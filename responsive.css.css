@@ -1,0 +1,22 @@
+/* Responsive Structural Adjustments for Portable Workstations */
+@media (max-width: 1023px) {
+    #terminal-sidebar {
+        width: 280px;
+        box-shadow: 10px 0 30px rgba(0, 0, 0, 0.7);
+    }
+    #terminal-sidebar.open-sidebar {
+        transform: translateX(0);
+    }
+}
+
+@media (max-width: 639px) {
+    header {
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+    }
+    #timeframe-container button {
+        padding-left: 0.35rem;
+        padding-right: 0.35rem;
+        font-size: 8px;
+    }
+}

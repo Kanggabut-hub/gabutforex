@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VANGUARD FOREX TERMINAL</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght=400;500;700;800&family=Plus+Jakarta+Sans:wght=400;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="responsive.css">
+</head>
+<body class="bg-[#06090f] text-[#d1d5db] font-mono-tech select-none overflow-hidden text-[11px]">
+
+    <div id="gateway-modal" class="fixed inset-0 bg-[#04060a] z-[100] flex flex-col items-center justify-center p-4">
+        <div class="w-full max-w-xl bg-[#090d16] border border-slate-800 p-6 rounded shadow-2xl">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
+                <div class="flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-amber-500 animate-ping"></span>
+                    <h1 class="text-white font-bold tracking-wider text-xs">VANGUARD TERMINAL BOOT CORE v3.0.0</h1>
+                </div>
+                <span class="text-slate-600 text-[9px]">LAYER: NET_CONNECT</span>
+            </div>
+            <div id="boot-log-screen" class="h-44 overflow-y-auto bg-[#020305] p-3 border border-slate-900 rounded text-slate-400 space-y-1 text-[10px] mb-4">
+                <p class="text-amber-500">[SYSTEM] Menginisialisasi modul komunikasi jaringan terminal...</p>
+            </div>
+            <div class="flex justify-between items-center">
+                <div class="text-[9px] text-slate-500">PIPELINE STATUS: <span id="boot-status" class="text-amber-400 animate-pulse">MEMBANGUN KONEKSI API</span></div>
+                <button id="btn-bypass-boot" disabled class="px-4 py-1.5 bg-slate-800 text-slate-500 rounded text-[10px] font-bold tracking-wide transition uppercase cursor-not-allowed">
+                    Masuk Terminal
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="command-palette" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-[90] flex items-start justify-center pt-[15vh] p-4 hidden">
+        <div class="w-full max-w-lg bg-[#090d16] border border-amber-600 rounded shadow-2xl overflow-hidden">
+            <div class="p-3 border-b border-slate-800 flex items-center justify-between">
+                <input type="text" id="palette-search" placeholder="Ketik instrumen forex/crypto (contoh: EURUSD, BTCUSDT)..." class="w-full bg-[#04060a] border border-slate-800 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 text-xs">
+            </div>
+            <div id="palette-results" class="max-h-60 overflow-y-auto p-1 space-y-0.5"></div>
+            <div class="p-2 bg-[#05070c] border-t border-slate-800 text-slate-500 text-[9px] flex justify-between">
+                <span>↑↓ Pilih | Enter Konfirmasi</span>
+                <span>ESC Tutup</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="min-h-screen flex flex-col h-screen">
+        
+        <header class="bg-[#090d16] border-b border-slate-800/80 px-4 py-2 flex items-center justify-between gap-4 shrink-0">
+            <div class="flex items-center gap-3">
+                <button id="btn-toggle-sidebar" class="p-1.5 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition lg:hidden">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                </button>
+                <div class="flex flex-col">
+                    <span class="text-white font-black tracking-wider text-xs flex items-center gap-1.5">
+                        VANGUARD <span class="text-amber-500 text-[9px] bg-amber-950/60 px-1 border border-amber-900 rounded font-bold">REALTIME WORKSTATION</span>
+                    </span>
+                    <span class="text-[8px] text-slate-500 uppercase tracking-widest -mt-0.5">Professional Financial Brokerage Terminal</span>
+                </div>
+            </div>
+
+            <div class="flex-1 max-w-xs hidden sm:block relative">
+                <input type="text" id="global-search" placeholder="Cari Pair / Tekan (Ctrl + K)..." class="w-full bg-[#04060a] border border-slate-800 rounded px-3 py-1 text-slate-300 focus:outline-none focus:border-amber-500 transition text-[10px]">
+                <div class="absolute right-2.5 top-1.5 text-slate-600 text-[9px] font-bold">SEARCH</div>
+            </div>
+
+            <div class="flex items-center gap-4 text-slate-400 text-[9px]">
+                <div class="hidden md:block bg-slate-900/50 border border-slate-800 px-2 py-0.5 rounded"><span class="text-slate-600">LDN (GMT+1):</span> <span id="clock-ldn" class="text-white font-bold">00:00:00</span></div>
+                <div class="hidden md:block bg-slate-900/50 border border-slate-800 px-2 py-0.5 rounded"><span class="text-slate-600">NYC (GMT-4):</span> <span id="clock-nyc" class="text-white font-bold">00:00:00</span></div>
+                <div class="bg-amber-950/40 px-2 py-1 border border-amber-900 rounded text-amber-400 font-bold">
+                    <span class="text-slate-500 mr-1">LOCAL:</span> <span id="clock-local" class="text-xs">00:00:00</span>
+                </div>
+            </div>
+        </header>
+
+        <section class="bg-[#060a12] border-b border-slate-800 px-4 py-1 flex items-center justify-between gap-2 overflow-x-auto text-[10px] shrink-0 font-sans">
+            <div class="flex items-center gap-4 shrink-0">
+                <div class="flex items-center gap-1.5">
+                    <span class="text-slate-500 font-mono-tech">ACTIVE API DATASTREAM:</span>
+                    <span id="active-api-badge" class="px-1.5 py-0.2 bg-amber-950 border border-amber-800 text-amber-400 rounded font-bold text-[9px]">CONNECTING</span>
+                </div>
+                <div class="flex items-center gap-3 font-mono-tech text-[9px]">
+                    <span class="flex items-center gap-1"><span id="status-api1" class="w-1.5 h-1.5 rounded-full bg-slate-600"></span> API Primary (Finnhub)</span>
+                    <span class="flex items-center gap-1"><span id="status-api2" class="w-1.5 h-1.5 rounded-full bg-slate-600"></span> Fallback 1 (Binance)</span>
+                    <span class="flex items-center gap-1"><span id="status-api2-coingecko" class="w-1.5 h-1.5 rounded-full bg-slate-600"></span> Fallback 2 (CoinGecko)</span>
+                </div>
+            </div>
+            <div class="flex items-center gap-3 shrink-0 font-mono-tech text-[9px]">
+                <button id="btn-force-refresh" class="px-2 py-0.5 bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-300 rounded transition font-bold">REFRESH POOL</button>
+            </div>
+        </section>
+
+        <div class="flex-1 flex relative overflow-hidden">
+            
+            <aside id="terminal-sidebar" class="absolute inset-y-0 left-0 -translate-x-full lg:static lg:translate-x-0 w-72 bg-[#090d16] border-r border-slate-800 z-40 transition-transform duration-200 ease-in-out flex flex-col overflow-hidden shrink-0">
+                <div class="p-3 border-b border-slate-800 bg-[#05080f] flex items-center justify-between">
+                    <span class="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Watchlist Workspace</span>
+                    <span id="watchlist-count-badge" class="text-[9px] bg-slate-800 text-slate-300 px-1.5 rounded-sm">0 Tickers</span>
+                </div>
+                
+                <div class="p-2 grid grid-cols-3 gap-1 bg-[#06090f] border-b border-slate-800 text-[9px]">
+                    <button id="tab-filter-all" class="py-1 bg-amber-950 text-amber-400 border border-amber-900 rounded font-bold uppercase">ALL</button>
+                    <button id="tab-filter-majors" class="py-1 bg-slate-900 text-slate-400 border border-transparent rounded hover:bg-slate-800 transition uppercase">FOREX</button>
+                    <button id="tab-filter-crypto" class="py-1 bg-slate-900 text-slate-400 border border-transparent rounded hover:bg-slate-800 transition uppercase">CRYPTO</button>
+                </div>
+
+                <div id="watchlist-container" class="flex-1 overflow-y-auto p-1 space-y-0.5 bg-[#04060a]"></div>
+            </aside>
+
+            <div class="flex-1 flex flex-col lg:flex-row overflow-hidden">
+                
+                <section class="flex-1 flex flex-col min-w-0 border-b lg:border-b-0 lg:border-r border-slate-800 bg-[#04060a]">
+                    <div class="p-2 border-b border-slate-800 bg-[#090d16] flex items-center justify-between gap-2 overflow-x-auto">
+                        <div class="flex items-center gap-1">
+                            <span id="active-chart-pair" class="text-white font-black text-xs mr-2 tracking-tight">-</span>
+                            <div class="flex bg-slate-900 border border-slate-800 rounded p-0.5 text-[9px]" id="timeframe-container">
+                                <button class="px-2 py-0.5 rounded text-slate-400 hover:text-white transition font-bold" data-tf="15m">15M</button>
+                                <button class="px-2 py-0.5 bg-amber-600 text-white font-bold rounded transition" data-tf="1H">1H</button>
+                                <button class="px-2 py-0.5 rounded text-slate-400 hover:text-white transition font-bold" data-tf="4H">4H</button>
+                                <button class="px-2 py-0.5 rounded text-slate-400 hover:text-white transition font-bold" data-tf="1D">1D</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="chart-canvas-wrapper" class="flex-1 w-full relative min-h-[300px]">
+                        <div id="chart-main-render-area" class="w-full h-full"></div>
+                        <div id="chart-loading-overlay" class="absolute inset-0 bg-[#04060a]/90 flex flex-col items-center justify-center text-xs text-amber-500">
+                            <span class="animate-pulse tracking-widest font-bold">MENGHUBUNGKAN DATA REALTIME MARKET...</span>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="terminal-analytics-panel" class="w-full lg:w-80 bg-[#090d16] flex flex-col overflow-y-auto shrink-0">
+                    <div class="p-3 border-b border-slate-800 bg-[#05080f] flex items-center justify-between">
+                        <span class="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Market Metrics Engine</span>
+                        <span class="text-amber-500 font-bold text-[9px]" id="analytics-engine-tag">LIVE_CALC</span>
+                    </div>
+
+                    <div class="p-3 space-y-4">
+                        <div class="space-y-1.5">
+                            <span class="text-slate-500 text-[9px] block uppercase font-bold tracking-wider">Market Direction & Strength</span>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div class="bg-[#04060a] p-2 border border-slate-900 rounded">
+                                    <span class="text-slate-500 block text-[8px] uppercase font-bold">TECHNICAL BIAS</span>
+                                    <span id="analytics-bias" class="text-slate-400 font-bold text-xs font-mono-tech">CALCULATING</span>
+                                </div>
+                                <div class="bg-[#04060a] p-2 border border-slate-900 rounded">
+                                    <span class="text-slate-500 block text-[8px] uppercase font-bold">TREND STRENGTH</span>
+                                    <span id="analytics-structure" class="text-white font-bold text-xs">-</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-[#04060a] p-2 border border-slate-900 rounded space-y-1.5">
+                            <div class="flex justify-between items-center">
+                                <span class="text-slate-500 text-[9px] font-bold">ATR VOLATILITY (14):</span>
+                                <span id="analytics-atr" class="text-amber-400 font-bold">-</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-slate-500 text-[9px] font-bold">ESTIMATED SPREAD:</span>
+                                <span id="analytics-spread-val" class="text-blue-400 font-bold">-</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-slate-500 text-[9px] font-bold">RSI VALUE (14):</span>
+                                <span id="analytics-rsi-val" class="text-white font-bold">-</span>
+                            </div>
+                        </div>
+
+                        <div class="bg-[#04060a] p-3 border border-slate-900 rounded space-y-2">
+                            <span class="text-slate-400 font-bold block text-[9px] uppercase tracking-wide border-b border-slate-800 pb-1">Mathematical Pivot Points (Daily)</span>
+                            <div class="space-y-1">
+                                <div class="flex justify-between"><span class="text-rose-400">Resistance Node (R1):</span><span id="pivot-r1" class="text-white font-bold">-</span></div>
+                                <div class="flex justify-between"><span class="text-slate-400">Mean Central Pivot (P):</span><span id="pivot-p" class="text-purple-400 font-bold">-</span></div>
+                                <div class="flex justify-between"><span class="text-emerald-400">Support Node (S1):</span><span id="pivot-s1" class="text-white font-bold">-</span></div>
+                            </div>
+                        </div>
+
+                        <div class="bg-[#050910] border border-slate-800 p-3 rounded space-y-2">
+                            <span class="text-slate-400 font-bold block text-[9px] uppercase tracking-wide">Risk Allocation Matrix Calculator</span>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label class="text-slate-500 text-[8px] uppercase font-bold block mb-0.5">Margin Size (USD)</label>
+                                    <input type="number" id="risk-margin" value="500" class="w-full bg-[#04060a] border border-slate-800 rounded px-2 py-0.5 text-white font-bold focus:outline-none focus:border-amber-500">
+                                </div>
+                                <div>
+                                    <label class="text-slate-500 text-[8px] uppercase font-bold block mb-0.5">Leverage Factor</label>
+                                    <input type="number" id="risk-leverage" value="50" class="w-full bg-[#04060a] border border-slate-800 rounded px-2 py-0.5 text-white font-bold focus:outline-none focus:border-amber-500">
+                                </div>
+                            </div>
+                            <div class="bg-[#020306] p-2 border border-slate-950 rounded flex justify-between items-center text-[10px]">
+                                <div><span class="text-slate-500 block text-[8px] uppercase">Est. PnL Output</span><span id="risk-pnl-output" class="text-slate-400 font-bold">-</span></div>
+                                <div class="text-right"><div><span class="text-slate-500 block text-[8px] uppercase">Calculated ROI</span><span id="risk-roi-output" class="text-slate-400 font-bold">-</span></div></div>
+                            </div>
+                        </div>
+
+                        <div class="space-y-1.5">
+                            <span class="text-slate-500 text-[9px] block uppercase font-bold tracking-wider">Live Economic & Forex News</span>
+                            <div id="news-feed-container" class="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                                <p class="text-slate-600 text-[9px] italic">Mengambil data berita global...</p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+            </div>
+        </div>
+
+        <footer class="bg-[#05080f] border-t border-slate-800/80 px-4 py-1 flex items-center justify-between text-[9px] text-slate-500 shrink-0">
+            <div>CLIENT WORKSTATION LAYER: STABLE DATA FEED SECURE RUNNING</div>
+            <div class="hidden sm:block">PINTASAN KEYBOARD: <span class="text-slate-400 bg-slate-900 border border-slate-800 px-1 py-0.2 rounded font-mono">CTRL + K</span> UNTUK PENCARIAN INSTRUMEN</div>
+        </footer>
+    </div>
+
+    <script src="api.js"></script>
+    <script src="indicators.js"></script>
+    <script src="analysis-engine.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
