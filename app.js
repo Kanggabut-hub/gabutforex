@@ -1,16 +1,26 @@
 /**
  * Vanguard Forex Workstation Main Application Orchestrator
- * Menghubungkan seluruh komponen UI/UX, Chart Utama, dan Jaringan API Jendela Pasar
+ * Fokus: Sinkronisasi Ticker, Watchlist Harga, Metrik Analytics, dan Risk Desk (Tanpa Grafik)
  */
 
 let globalActivePairUid = "EURUSD";
-let globalActiveTimeframe = "1H";
 let globalActiveFilter = "all";
 let globalMarketDataCache = {};
 
-// TradingView Lightweight Chart Variables
-let coreChartInstance = null;
-let coreCandlestickSeries = null;
+// Default Ticker Registry Lokal sebagai cadangan mutlak jika window.VANGUARD_TICKER_REGISTRY tidak terbaca
+const LOCAL_TICKER_REGISTRY = [
+    { uid: "EURUSD", name: "EUR / USD", category: "forex", baseSpread: 0.00012, decimals: 5 },
+    { uid: "GBPUSD", name: "GBP / USD", category: "forex", baseSpread: 0.00016, decimals: 5 },
+    { uid: "USDJPY", name: "USD / JPY", category: "forex", baseSpread: 0.014, decimals: 3 },
+    { uid: "AUDUSD", name: "AUD / USD", category: "forex", baseSpread: 0.00011, decimals: 5 },
+    { uid: "USDCAD", name: "USD / CAD", category: "forex", baseSpread: 0.00015, decimals: 5 },
+    { uid: "BTCUSDT", name: "Bitcoin / USDT", category: "crypto", baseSpread: 0.5, decimals: 2 },
+    { uid: "ETHUSDT", name: "Ethereum / USDT", category: "crypto", baseSpread: 0.04, decimals: 2 }
+];
+
+function getTickerRegistry() {
+    return window.VANGUARD_TICKER_REGISTRY || LOCAL_TICKER_REGISTRY;
+}
 
 document.addEventListener("DOMContentLoaded", async () => {
     initializeClocks();
@@ -57,21 +67,29 @@ async function executeTerminalBootSequence() {
         }
         
         // 1. Ambil data harga pasar awal
-        globalMarketDataCache = await window.apiEngine.fetchMarketPricePool();
+        if (window.apiEngine && typeof window.apiEngine.fetchMarketPricePool === "function") {
+            globalMarketDataCache = await window.apiEngine.fetchMarketPricePool();
+        } else {
+            throw new Error("apiEngine tidak terdefinisi secara global.");
+        }
         appendLog("Sinkronisasi harga pasar berhasil diselesaikan.", "success");
         
     } catch (err) {
-        console.error("Booting Dialirkan ke Mode Cadangan:", err);
+        console.error("Booting beralih ke engine cadangan lokal:", err);
         appendLog("Koneksi eksternal sibuk. Mengaktifkan mode data lokal aman.", "warn");
         
         if (window.apiEngine && typeof window.apiEngine.generateAllFallbackData === "function") {
             globalMarketDataCache = window.apiEngine.generateAllFallbackData();
         } else {
+            // Pembuatan data statis manual jika class api.js bermasalah total
             globalMarketDataCache = {};
+            getTickerRegistry().forEach(node => {
+                globalMarketDataCache[node.uid] = { price: node.uid.includes("JPY") ? 155.20 : (node.uid.includes("USDT") ? 67000.00 : 1.0850), changePct: 0.15, high: 1.0900, low: 1.0800 };
+            });
         }
     }
 
-    // 2. Ambil berita tanpa 'await' agar tidak memblokir proses booting utama jika API lambat
+    // 2. Ambil berita tanpa 'await' agar tidak memblokir proses masuk terminal
     appendLog("Mengunduh feed ringkasan berita makroekonomi...", "info");
     updateFinancialNewsFeed(); 
 
@@ -83,7 +101,7 @@ async function executeTerminalBootSequence() {
         console.warn("Pre-rendering workspace tertunda:", uiError);
     }
 
-    // 4. Pastikan tombol selalu aktif di akhir sekuens
+    // 4. Aktifkan tombol masuk ke terminal
     activateTerminalBypassButton(appendLog);
 }
 
@@ -104,10 +122,9 @@ function activateTerminalBypassButton(appendLog) {
         const modal = document.getElementById('gateway-modal');
         if (modal) modal.classList.add('hidden');
         
-        // Membangun ulang struktur UI saat masuk terminal utama
+        // Membangun struktur UI utama tanpa memanggil chart
         renderWatchlistWorkspace();
         updateSelectedPairMetricsDesk();
-        initializeMainLightweightChart(); 
         
         // Jalankan siklus sinkronisasi berkala aman
         setInterval(syncTerminalMarketPool, window.VANGUARD_API_CONFIG?.POOL_INTERVAL || 4000);
@@ -122,124 +139,11 @@ async function syncTerminalMarketPool() {
                 globalMarketDataCache = freshData;
                 renderWatchlistWorkspace();
                 updateSelectedPairMetricsDesk();
-                streamLiveTickToChart();
             }
         }
     } catch (e) {
-        console.error("[POOL] Siklus pembaruan terganggu jaringan.", e);
+        console.error("[POOL] Pembaruan harga berkala terganggu jaringan.", e);
     }
-}
-
-function initializeMainLightweightChart() {
-    const chartWrapper = document.getElementById('chart-main-render-area');
-    if (!chartWrapper) return;
-    chartWrapper.innerHTML = ""; 
-
-    if (typeof LightweightCharts === "undefined") {
-        console.error("Library TradingView Lightweight Charts tidak terdeteksi!");
-        return;
-    }
-
-    coreChartInstance = LightweightCharts.createChart(chartWrapper, {
-        layout: {
-            background: { color: '#04060a' },
-            textColor: '#94a3b8',
-            fontSize: 10,
-            fontFamily: 'JetBrains Mono'
-        },
-        grid: {
-            vertLines: { color: '#0f172a' },
-            horzLines: { color: '#0f172a' }
-        },
-        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-        timeScale: { borderColor: '#1e293b', timeVisible: true }
-    });
-
-    coreCandlestickSeries = coreChartInstance.addCandlestickSeries({
-        upColor: '#10b981', downColor: '#ef4444',
-        borderUpColor: '#10b981', borderDownColor: '#ef4444',
-        wickUpColor: '#10b981', wickDownColor: '#ef4444'
-    });
-
-    const resizeObserver = new ResizeObserver(entries => {
-        if (entries && entries[0] && coreChartInstance) {
-            const { width, height } = entries[0].contentRect;
-            coreChartInstance.resize(width, height);
-        }
-    });
-    resizeObserver.observe(chartWrapper);
-    
-    loadTargetPairChartData();
-}
-
-function generateStableSyntheticHistory(baselinePrice, count = 100) {
-    const history = [];
-    
-    let safePrice = parseFloat(baselinePrice);
-    if (isNaN(safePrice) || safePrice <= 0) {
-        safePrice = 1.0; 
-    }
-
-    let current = safePrice - (count * 0.0005);
-    let nowTimestamp = Math.floor(Date.now() / 1000) - (count * 3600);
-
-    for (let i = 0; i < count; i++) {
-        const open = current;
-        const close = current + (Math.random() - 0.49) * (safePrice * 0.003);
-        const high = Math.max(open, close) + (Math.random() * (safePrice * 0.0015));
-        const low = Math.min(open, close) - (Math.random() * (safePrice * 0.0015));
-        
-        history.push({ time: nowTimestamp, open, high, low, close });
-        current = close;
-        nowTimestamp += 3600;
-    }
-    return history;
-}
-
-function loadTargetPairChartData() {
-    const overlay = document.getElementById('chart-loading-overlay');
-    const chartPairLabel = document.getElementById('active-chart-pair');
-    
-    if (overlay) overlay.classList.remove('hidden');
-    if (chartPairLabel) chartPairLabel.innerText = globalActivePairUid;
-    
-    let nodeData = globalMarketDataCache[globalActivePairUid];
-    if (!nodeData || isNaN(parseFloat(nodeData.price))) {
-        if (window.apiEngine && typeof window.apiEngine.generateFallbackPlaceholderData === "function") {
-            nodeData = window.apiEngine.generateFallbackPlaceholderData(globalActivePairUid);
-        } else {
-            nodeData = { price: 1.0, high: 1.004, low: 0.996, changePct: 0.0 };
-        }
-    }
-    
-    setTimeout(() => {
-        try {
-            if (coreCandlestickSeries && coreChartInstance) {
-                const seriesData = generateStableSyntheticHistory(nodeData.price, 80);
-                coreCandlestickSeries.setData(seriesData);
-                coreChartInstance.timeScale().fitContent();
-            }
-        } catch (chartError) {
-            console.error("Gagal menggambar grafik TradingView:", chartError);
-        } finally {
-            if (overlay) overlay.classList.add('hidden');
-        }
-    }, 300);
-}
-
-function streamLiveTickToChart() {
-    if (!coreCandlestickSeries) return;
-    const nodeData = globalMarketDataCache[globalActivePairUid];
-    if (!nodeData) return;
-
-    const nowTimestamp = Math.floor(Date.now() / 1000);
-    coreCandlestickSeries.update({
-        time: nowTimestamp - (nowTimestamp % 3600), 
-        open: nodeData.low,
-        high: nodeData.high,
-        low: nodeData.low,
-        close: nodeData.price
-    });
 }
 
 function renderWatchlistWorkspace() {
@@ -247,7 +151,7 @@ function renderWatchlistWorkspace() {
     if (!container) return;
     container.innerHTML = "";
     
-    const registry = window.VANGUARD_TICKER_REGISTRY || [];
+    const registry = getTickerRegistry();
     let filteredRegistry = registry;
     if (globalActiveFilter !== "all") {
         filteredRegistry = registry.filter(x => x.category === globalActiveFilter);
@@ -267,7 +171,6 @@ function renderWatchlistWorkspace() {
         row.className = `p-2 bg-[#080d16] border border-slate-900 rounded flex items-center justify-between cursor-pointer hover:bg-slate-800/60 transition ${isActive}`;
         row.onclick = () => {
             globalActivePairUid = node.uid;
-            loadTargetPairChartData();
             renderWatchlistWorkspace();
             updateSelectedPairMetricsDesk();
         };
@@ -287,33 +190,37 @@ function renderWatchlistWorkspace() {
 }
 
 function updateSelectedPairMetricsDesk() {
-    const registry = window.VANGUARD_TICKER_REGISTRY || [];
+    const registry = getTickerRegistry();
     const node = registry.find(x => x.uid === globalActivePairUid) || { decimals: 2, baseSpread: 0.0001 };
     
     let pool = globalMarketDataCache[globalActivePairUid];
     if (!pool || isNaN(parseFloat(pool.price))) {
-        if (window.apiEngine && typeof window.apiEngine.generateFallbackPlaceholderData === "function") {
-            pool = window.apiEngine.generateFallbackPlaceholderData(globalActivePairUid);
-        } else {
-            pool = { price: 1.0, high: 1.004, low: 0.996, changePct: 0.0 };
-        }
+        pool = { price: 1.0850, high: 1.0900, low: 1.0800, changePct: 0.15 };
     }
-    
-    const candles = generateStableSyntheticHistory(pool.price, 30);
-    
-    let rsi = 50, atr = 0.001, pivots = { pivot: pool.price, r1: pool.price * 1.01, s1: pool.price * 0.99 };
-    let biasInfo = { bias: "NEUTRAL", color: "text-slate-400" };
-    let trendStrength = "LOW VOLATILITY SIDEWAYS";
 
+    const chartPairLabel = document.getElementById('active-chart-pair');
+    if (chartPairLabel) chartPairLabel.innerText = globalActivePairUid;
+    
+    let rsi = 52, atr = 0.0014, pivots = { pivot: pool.price, r1: pool.price * 1.002, s1: pool.price * 0.998 };
+    let biasInfo = { bias: "NEUTRAL", color: "text-slate-400" };
+    let trendStrength = "MODERATE MOMENTUM";
+
+    // Simulasikan penghitungan jika engine math terpisah tidak terbaca
     if (window.VanguardIndicators) {
-        rsi = window.VanguardIndicators.calculateRsi(candles, 14);
-        atr = window.VanguardIndicators.calculateAtr(candles, 14);
-        pivots = window.VanguardIndicators.calculateClassicPivotNodes(pool.price, pool.high, pool.low);
+        // Buat dummy candle array untuk fungsi math rsi/atr
+        const dummyCandles = Array.from({length: 20}, (_, i) => ({ close: pool.price, high: pool.high, low: pool.low }));
+        rsi = window.VanguardIndicators.calculateRsi(dummyCandles, 14) || rsi;
+        atr = window.VanguardIndicators.calculateAtr(dummyCandles, 14) || atr;
+        pivots = window.VanguardIndicators.calculateClassicPivotNodes(pool.price, pool.high, pool.low) || pivots;
+    } else {
+        pivots = { pivot: (pool.high + pool.low + pool.price)/3, r1: (2 * ((pool.high + pool.low + pool.price)/3)) - pool.low, s1: (2 * ((pool.high + pool.low + pool.price)/3)) - pool.high };
     }
     
     if (window.VanguardAnalysisEngine) {
         biasInfo = window.VanguardAnalysisEngine.evaluateMarketBias(rsi, pool.changePct);
         trendStrength = window.VanguardAnalysisEngine.evaluateTrendStrength(pool.changePct);
+    } else {
+        biasInfo = pool.changePct >= 0 ? { bias: "BULLISH", color: "text-emerald-500" } : { bias: "BEARISH", color: "text-rose-500" };
     }
 
     const biasLabel = document.getElementById('analytics-bias');
@@ -431,15 +338,6 @@ function setupUiInteractionListeners() {
         }
     });
 
-    document.querySelectorAll('#timeframe-container button').forEach(btn => {
-        btn.onclick = (e) => {
-            document.querySelectorAll('#timeframe-container button').forEach(b => b.className = "px-2 py-0.5 rounded text-slate-400 hover:text-white transition font-bold");
-            e.target.className = "px-2 py-0.5 bg-amber-600 text-white font-bold rounded transition";
-            globalActiveTimeframe = e.target.getAttribute('data-tf');
-            loadTargetPairChartData();
-        };
-    });
-
     const refreshBtn = document.getElementById('btn-force-refresh');
     if (refreshBtn) {
         refreshBtn.onclick = () => {
@@ -497,7 +395,7 @@ function executePaletteIncrementalFiltering(query) {
     resContainer.innerHTML = "";
     
     const normalized = query.toUpperCase();
-    const registry = window.VANGUARD_TICKER_REGISTRY || [];
+    const registry = getTickerRegistry();
     const hits = registry.filter(x => x.uid.includes(normalized) || x.name.toUpperCase().includes(normalized));
     
     if (hits.length === 0) {
@@ -512,7 +410,6 @@ function executePaletteIncrementalFiltering(query) {
         row.onclick = () => {
             globalActivePairUid = node.uid;
             toggleCommandPalette(false);
-            loadTargetPairChartData();
             renderWatchlistWorkspace();
             updateSelectedPairMetricsDesk();
         };
