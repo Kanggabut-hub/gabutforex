@@ -47,7 +47,7 @@
             </div>
 
             <div class="flex justify-between items-center">
-                <div class="text-[10px] text-gray-500">SYSTEM STATUS: <span id="boot-status" class="text-amber-400 animate-pulse">COMPUTING PIPELINES</span></div>
+                <div class="text-[10px] text-gray-500">SYSTEM STATUS: <span id="boot-status" class="text-amber-400 animate-pulse">CONNECTING LIVE WEBSOCKETS</span></div>
                 <button id="btn-bypass-boot" disabled class="px-4 py-1.5 bg-gray-800 text-gray-500 rounded text-[11px] font-bold tracking-wide transition uppercase cursor-not-allowed">
                     Wait for Sync
                 </button>
@@ -116,8 +116,8 @@
                         <span class="text-gray-500 text-[9px] font-bold uppercase tracking-wider block mb-2 font-mono-tech">Broker Multi-API Pipeline</span>
                         <div class="space-y-1.5 font-mono-tech text-[10px]">
                             <div class="flex items-center justify-between p-1.5 bg-gray-900/50 rounded border border-gray-800/50">
-                                <span class="text-gray-400">TRADENATION DATA</span>
-                                <span class="text-emerald-400 font-bold">● ONLINE</span>
+                                <span class="text-gray-400">BINANCE WS DATA</span>
+                                <span id="ws-status-badge" class="text-amber-400 font-bold">● CONNECTING</span>
                             </div>
                             <div class="flex items-center justify-between p-1.5 bg-gray-900/50 rounded border border-gray-800/50">
                                 <span class="text-gray-400">BULLMARKET CORE</span>
@@ -153,7 +153,7 @@
                     </div>
                     <div class="bg-[#0c1017] border border-gray-800 p-2.5 rounded hover:border-gray-700 transition">
                         <span class="text-gray-500 text-[9px] font-bold uppercase tracking-wider font-mono-tech">Economic Event Pipeline</span>
-                        <div class="text-blue-400 font-bold font-mono-tech mt-0.5 text-xs animate-pulse-soft">⚡ INTEGRATED TRADENATION</div>
+                        <div class="text-blue-400 font-bold font-mono-tech mt-0.5 text-xs animate-pulse-soft">⚡ LIVE DATA FEED</div>
                     </div>
                     <div class="bg-[#0c1017] border border-gray-800 p-2.5 rounded hover:border-gray-700 transition">
                         <span class="text-gray-500 text-[9px] font-bold uppercase tracking-wider font-mono-tech">Total Pair Pool</span>
@@ -197,7 +197,7 @@
                 <div class="flex justify-between items-start">
                     <div>
                         <h3 id="modal-pair-title" class="text-white font-black text-lg tracking-tight font-mono-tech">BTC/USDT</h3>
-                        <p id="modal-pair-source" class="text-[10px] text-gray-500 font-mono-tech">TRADENATION FX PIPELINE</p>
+                        <p id="modal-pair-source" class="text-[10px] text-gray-500 font-mono-tech">WEBSOCKET REALTIME PIPELINE</p>
                     </div>
                     <div class="text-right font-mono-tech">
                         <div id="modal-pair-price" class="text-white font-bold text-base">0.00</div>
@@ -300,48 +300,79 @@
         let currentActivePage = 1;
         const maxItemsPerPageLimit = 16;
         let selectedPairUidForModal = null;
+        let socketConnection = null;
 
+        // Daftar Pair Riil dari Pasar Global (Format Simbol Binance)
         const MOCK_TICKERS = [
-            "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "NZDUSD", "EURGBP", "EURJPY",
-            "GBPJPY", "AUDJPY", "GOLD", "SILVER", "CRUDE", "BTCUSD", "ETHUSD", "SOLUSD"
+            "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "ADAUSDT", "XRPUSDT", "DOTUSDT", "DOGEUSDT",
+            "LINKUSDT", "LTCUSDT", "AVAXUSDT", "MATICUSDT", "UNIUSDT", "ATOMUSDT", "TRXUSDT", "ETCUSDT"
         ];
 
-        function generateMockBrokerPipelines() {
-            let temporaryCluster = [];
-            MOCK_TICKERS.forEach((ticker, index) => {
-                let basePrice = 1.0;
-                if (ticker.includes("JPY")) basePrice = 155.40;
-                if (ticker === "GOLD") basePrice = 2350.00;
-                if (ticker === "SILVER") basePrice = 29.50;
-                if (ticker === "CRUDE") basePrice = 78.20;
-                if (ticker === "BTCUSD") basePrice = 67200.00;
-                if (ticker === "ETHUSD") basePrice = 3500.00;
-                if (ticker === "SOLUSD") basePrice = 165.00;
+        // Struktur Inisialisasi Data Awal agar Tampilan Tidak Kosong Sebelum WS Terkoneksi
+        function initializeCacheRegistry() {
+            coreMemoryCache = MOCK_TICKERS.map(ticker => ({
+                uid: ticker + "_LIVE",
+                ticker: ticker.replace("USDT", "/USDT"),
+                rawTicker: ticker,
+                source: "BINANCE LIVE",
+                price: 0.0,
+                change24h: 0.0,
+                volume24h: 0,
+                calculatedWeight: 0
+            }));
+        }
 
-                const randomDelta = (Math.random() - 0.5) * (basePrice * 0.02);
-                const finalPrice = basePrice + randomDelta;
-                const changePercent = (Math.random() - 0.45) * 5.0;
-                const volume = Math.floor(Math.random() * 800000000) + 10000000;
+        // FUNGSI UTAMA: Menghubungkan Website ke WebSoket Riil Binance Secara Real-Time
+        function connectToLiveWebsocketPipeline() {
+            const streams = MOCK_TICKERS.map(t => `${t.toLowerCase()}@ticker`).join('/');
+            socketConnection = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
 
-                // Tiers weights generator
-                let weight = volume * (index % 2 === 0 ? 10 : 0.5);
-                if (ticker === "BTCUSD" || ticker === "GOLD" || ticker === "EURUSD") {
-                    weight = 6000000000; // Force High-cap
-                } else if (ticker === "SOLUSD" || ticker === "CRUDE" || ticker === "NZDUSD") {
-                    weight = 700000000; // Force Mid-cap
+            socketConnection.onopen = () => {
+                document.getElementById('ws-status-badge').innerText = "● LIVE ONLINE";
+                document.getElementById('ws-status-badge').className = "text-emerald-400 font-bold";
+            };
+
+            socketConnection.onmessage = (event) => {
+                const messageData = JSON.parse(event.data);
+                const streamName = messageData.stream;
+                const tickerData = messageData.data;
+
+                if (tickerData) {
+                    const targetSymbol = tickerData.s; // Contoh: "BTCUSDT"
+                    const currentPrice = parseFloat(tickerData.c); // Last Price
+                    const priceChangePercent = parseFloat(tickerData.P); // 24h Price Change Percent
+                    const totalVolume = parseFloat(tickerData.v); // 24h Volume
+
+                    // Update data spesifik di dalam memory cache
+                    const record = coreMemoryCache.find(x => x.rawTicker === targetSymbol);
+                    if (record) {
+                        record.price = currentPrice;
+                        record.change24h = priceChangePercent;
+                        record.volume24h = totalVolume;
+                        // Tiers sorting weights berdasarkan volume dikalikan nominal kapitalisasi fiktif
+                        record.calculatedWeight = totalVolume * currentPrice;
+                    }
+
+                    // Re-render layout grid secara instant tanpa merusak posisi scroll/halaman
+                    compileActiveFilterSorting();
+
+                    // Jika user sedang membuka modal detail pada pair tersebut, update harganya secara live
+                    if (selectedPairUidForModal && record && selectedPairUidForModal === record.uid) {
+                        updateModalRealtimeFields(record);
+                    }
                 }
+            };
 
-                temporaryCluster.push({
-                    uid: ticker + "_TATION",
-                    ticker: ticker,
-                    source: "TRADENATION LIVE",
-                    price: finalPrice,
-                    change24h: changePercent,
-                    volume24h: volume,
-                    calculatedWeight: weight
-                });
-            });
-            return temporaryCluster;
+            socketConnection.onerror = () => {
+                document.getElementById('ws-status-badge').innerText = "● WS ERROR";
+                document.getElementById('ws-status-badge').className = "text-rose-500 font-bold";
+            };
+
+            socketConnection.onclose = () => {
+                document.getElementById('ws-status-badge').innerText = "● RECONNECTING";
+                document.getElementById('ws-status-badge').className = "text-amber-500 font-bold";
+                setTimeout(connectToLiveWebsocketPipeline, 4000); // Auto reconnect jika putus
+            };
         }
 
         function runVanguardSecureBoot() {
@@ -350,13 +381,13 @@
             const bypassBtn = document.getElementById('btn-bypass-boot');
             
             const logs = [
-                "[SYSTEM] Establishing Quad-API Node connection to Tradenation...",
-                "[SYSTEM] Authenticating secure tokens with Bullmarket Data Core...",
+                "[SYSTEM] Establishing Live Quad-API Node connection to Global Server...",
+                "[SYSTEM] Authenticating secure sockets with Binance Core Feed...",
                 "[ANALYSIS] Loading Smart Money Concepts structural framework...",
-                "[ANALYSIS] Initializing Mxwell Reversal Multipliers (Factor: 2.5)...",
+                "[ANALYSIS] Initializing Mxwell Reversal Multipliers...",
                 "[ANALYSIS] Syncing Bjorgum Footprint accumulation database...",
-                "[SUCCESS] Memory Cache Registry configured with 15s TTL Cache.",
-                "[READY] Connection established. Kanggabut Vanguard Engine Active."
+                "[SUCCESS] WebSocket Streams Registry Configured & Active.",
+                "[READY] Connection stable. Kanggabut Vanguard Engine Online."
             ];
 
             let logIndex = 0;
@@ -373,27 +404,18 @@
                     bypassBtn.removeAttribute('disabled');
                     bypassBtn.className = "px-4 py-1.5 bg-blue-600 text-white rounded text-[11px] font-bold tracking-wide transition hover:bg-blue-700 uppercase cursor-pointer";
                 }
-            }, 300);
+            }, 250);
 
             bypassBtn.addEventListener('click', () => {
                 document.getElementById('gateway-modal').style.display = 'none';
-                executeGlobalPipelineCoreRefresh();
-                setInterval(executeGlobalPipelineCoreRefresh, 4000); // Live Simulation Loop
+                initializeCacheRegistry();
+                connectToLiveWebsocketPipeline();
+                
+                liveEconomicNewsFeed = [...cmcCatalystDatabase];
+                document.getElementById('stats-total-pos').innerText = `${MOCK_TICKERS.length} Pairs`;
+                kalkulasiUlangSentimenGlobal(liveEconomicNewsFeed);
+                renderNewsFeedPanel();
             });
-        }
-
-        function executeGlobalPipelineCoreRefresh() {
-            coreMemoryCache = generateMockBrokerPipelines();
-            liveEconomicNewsFeed = [...cmcCatalystDatabase];
-            document.getElementById('stats-total-pos').innerText = `${coreMemoryCache.length} Pairs`;
-            
-            kalkulasiUlangSentimenGlobal(liveEconomicNewsFeed);
-            compileActiveFilterSorting();
-            renderNewsFeedPanel();
-
-            if (selectedPairUidForModal && !document.getElementById('specs-modal').classList.contains('hidden')) {
-                openSpecsModalWindow(selectedPairUidForModal);
-            }
         }
 
         function kalkulasiUlangSentimenGlobal(newsArray) {
@@ -419,7 +441,8 @@
 
         function getOrComputeAdvancedIndicators(uid, price, change24h) {
             const now = Date.now();
-            if (advancedIndicatorsCache[uid] && (now - advancedIndicatorsCache[uid].timestamp < 4000)) {
+            // Data indikator di-cache selama 3 detik saja agar sinkron dengan pergerakan harga websocket yang cepat
+            if (advancedIndicatorsCache[uid] && (now - advancedIndicatorsCache[uid].timestamp < 3000)) {
                 return advancedIndicatorsCache[uid].data;
             }
 
@@ -449,8 +472,6 @@
             
             let computedConfluence = Math.floor((mxwellStrength + rsiVal + levelScore) / 3);
             if (globalMacroSentimentScore > 60 && mxwellBias === "BULLISH") computedConfluence += 8;
-            if (globalMacroSentimentScore < 42 && mxwellBias === "BEARISH") computedConfluence += 6;
-            if (globalMacroSentimentScore < 38 && mxwellBias === "BULLISH") computedConfluence -= 14;
             computedConfluence = Math.max(15, Math.min(97, computedConfluence));
             
             const isLong = mxwellBias === "BULLISH";
@@ -494,9 +515,10 @@
             let processedList = [...coreMemoryCache];
             let highCount = 0, midCount = 0, lowCount = 0;
 
+            // Klasifikasi Berdasarkan live Volume weight
             coreMemoryCache.forEach(item => {
-                if (item.calculatedWeight >= 5000000000) highCount++;
-                else if (item.calculatedWeight >= 500000000) midCount++;
+                if (item.calculatedWeight >= 50000000) highCount++;
+                else if (item.calculatedWeight >= 5000000) midCount++;
                 else lowCount++;
             });
 
@@ -505,9 +527,9 @@
             document.getElementById('badge-count-mid').innerText = midCount;
             document.getElementById('badge-count-low').innerText = lowCount;
 
-            if (activeMarketTierFilter === 'high') processedList = processedList.filter(x => x.calculatedWeight >= 5000000000);
-            else if (activeMarketTierFilter === 'mid') processedList = processedList.filter(x => x.calculatedWeight >= 500000000 && x.calculatedWeight < 5000000000);
-            else if (activeMarketTierFilter === 'low') processedList = processedList.filter(x => x.calculatedWeight < 500000000);
+            if (activeMarketTierFilter === 'high') processedList = processedList.filter(x => x.calculatedWeight >= 50000000);
+            else if (activeMarketTierFilter === 'mid') processedList = processedList.filter(x => x.calculatedWeight >= 5000000 && x.calculatedWeight < 50000000);
+            else if (activeMarketTierFilter === 'low') processedList = processedList.filter(x => x.calculatedWeight < 5000000);
 
             if (currentSearchQuery.trim() !== "") {
                 processedList = processedList.filter(x => x.ticker.toLowerCase().includes(currentSearchQuery.toLowerCase()));
@@ -544,7 +566,7 @@
                 const biasColor = item.change24h >= 0 ? "text-emerald-400" : "text-rose-500";
                 const confColor = setup.confluenceScore > 75 ? "text-purple-400" : "text-blue-400";
 
-                // PERBAIKAN: Informasi Penunjuk Posisi Long/Short serta SL, TP 1/2/3 dihilangkan sepenuhnya dari kartu depan agar bersih
+                // Tetap Menghilangkan informasi Long/Short, SL, TP 1/2/3 di halaman depan kartu
                 container.innerHTML += `
                     <div onclick="openSpecsModalWindow('${item.uid}')" class="bg-[#0c1017] border border-gray-800/80 p-3 rounded shadow hover:border-gray-600/80 transition flex flex-col justify-between h-44 cursor-pointer group hover:bg-[#0f141d]">
                         <div>
@@ -568,7 +590,7 @@
                         <div class="flex items-center justify-between border-t border-gray-900 pt-2 mt-2 font-mono-tech text-[10px]">
                             <div class="flex items-center gap-1.5">
                                 <span class="w-1.5 h-1.5 rounded-full ${item.change24h >= 0 ? 'bg-emerald-500' : 'bg-rose-500'} animate-pulse"></span>
-                                <span class="text-gray-500 font-bold">TERMINAL DATA POOL</span>
+                                <span class="text-gray-500 font-bold">TERMINAL REALTIME</span>
                             </div>
                             <div class="bg-gray-950 px-1.5 py-0.5 border border-gray-900 rounded">
                                 <span class="text-gray-600">CONF:</span> <span class="${confColor} font-black">${setup.confluenceScore}%</span>
@@ -610,7 +632,7 @@
             const setup = indicators.setup;
             const decimals = tickerDecimals(node.ticker);
 
-            document.getElementById('modal-pair-title').innerText = `${node.ticker}/USDT`;
+            document.getElementById('modal-pair-title').innerText = node.ticker;
             document.getElementById('modal-pair-price').innerText = node.price.toFixed(decimals);
             
             const changeEl = document.getElementById('modal-pair-change');
@@ -639,6 +661,25 @@
 
             executeCalculatedRoiPnLFormula(node.change24h);
             document.getElementById('specs-modal').classList.remove('hidden');
+        }
+
+        // Fungsi khusus untuk memperbarui kolom modal secara real-time setiap kali pesan WebSocket masuk
+        function updateModalRealtimeFields(node) {
+            const decimals = tickerDecimals(node.ticker);
+            const indicators = getOrComputeAdvancedIndicators(node.uid, node.price, node.change24h);
+            const setup = indicators.setup;
+
+            document.getElementById('modal-pair-price').innerText = node.price.toFixed(decimals);
+            const changeEl = document.getElementById('modal-pair-change');
+            changeEl.innerText = `${node.change24h >= 0 ? '+' : ''}${node.change24h.toFixed(2)}%`;
+            
+            document.getElementById('modal-setup-entry').innerText = setup.entry.toFixed(decimals);
+            document.getElementById('modal-setup-tp1').innerText = setup.tp1.toFixed(decimals);
+            document.getElementById('modal-setup-tp2').innerText = setup.tp2.toFixed(decimals);
+            document.getElementById('modal-setup-tp3').innerText = setup.tp3.toFixed(decimals);
+            document.getElementById('modal-rose-sl-custom').innerText = setup.sl.toFixed(decimals);
+            
+            executeCalculatedRoiPnLFormula(node.change24h);
         }
 
         function executeCalculatedRoiPnLFormula(changePercentFactor) {
@@ -671,9 +712,10 @@
         }
 
         function tickerDecimals(ticker) {
-            if (ticker === "GOLD" || (ticker.includes("USD") && ticker !== "EURUSD" && ticker !== "GBPUSD")) return 2;
-            if (ticker === "SILVER" || ticker === "CRUDE") return 2;
-            return 5;
+            const clean = ticker.replace("/", "");
+            if (clean.startsWith("BTC") || clean.startsWith("ETH")) return 2;
+            if (clean.startsWith("SOL") || clean.startsWith("BNB")) return 2;
+            return 4;
         }
 
         window.addEventListener('DOMContentLoaded', () => {
