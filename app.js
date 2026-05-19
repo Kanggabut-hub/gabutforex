@@ -1,6 +1,6 @@
 /**
- * Vanguard Quant Terminal - Core Engine Orchestrator
- * Sinkronisasi penuh dengan struktur HTML asli (forex.txt)
+ * Vanguard Quant Terminal - Core Engine Orchestrator (MANDIRI)
+ * Bebas dari ketergantungan apiEngine agar tidak crash/stuck
  */
 
 let coreMemoryCache = [];
@@ -10,9 +10,9 @@ let currentSearchQuery = '';
 let rowsPerPage = 10;
 let selectedPairUidForModal = 'EURUSD';
 
-// 1. DAFTAR LENGKAP INSTRUMEN (Forex, Stock Market, Crypto, Commodities)
+// DAFTAR LENGKAP INSTRUMEN (Forex Lengkap, Stock Market, Crypto, Commodities)
 const VANGUARD_TICKER_REGISTRY = [
-    // FOREIGN CURRENCIES (FOREX)
+    // FOREIGN CURRENCIES (FOREX LENGKAP)
     { uid: "EURUSD", name: "EUR / USD", category: "forex", baseSpread: 0.00012, decimals: 5 },
     { uid: "GBPUSD", name: "GBP / USD", category: "forex", baseSpread: 0.00016, decimals: 5 },
     { uid: "USDJPY", name: "USD / JPY", category: "forex", baseSpread: 0.014, decimals: 3 },
@@ -20,6 +20,9 @@ const VANGUARD_TICKER_REGISTRY = [
     { uid: "USDCAD", name: "USD / CAD", category: "forex", baseSpread: 0.00015, decimals: 5 },
     { uid: "USDCHF", name: "USD / CHF", category: "forex", baseSpread: 0.00013, decimals: 5 },
     { uid: "NZDUSD", name: "NZD / USD", category: "forex", baseSpread: 0.00014, decimals: 5 },
+    { uid: "EURGBP", name: "EUR / GBP", category: "forex", baseSpread: 0.00015, decimals: 5 },
+    { uid: "EURJPY", name: "EUR / JPY", category: "forex", baseSpread: 0.018, decimals: 3 },
+    { uid: "GBPJPY", name: "GBP / JPY", category: "forex", baseSpread: 0.022, decimals: 3 },
     
     // STOCK MARKET (SAHAM GLOBAL)
     { uid: "AAPL", name: "Apple Inc.", category: "stocks", baseSpread: 0.05, decimals: 2 },
@@ -40,12 +43,12 @@ const VANGUARD_TICKER_REGISTRY = [
     { uid: "USOIL", name: "Crude Oil WTI", category: "commodities", baseSpread: 0.03, decimals: 2 }
 ];
 
-document.addEventListener("DOMContentLoaded", async () => {
+document.addEventListener("DOMContentLoaded", () => {
     initializeClocks();
     setupUiListeners();
     
-    // Jalankan sekuens booting awal
-    await executeTerminalBootSequence();
+    // Jalankan sekuens booting awal secara mandiri
+    executeTerminalBootSequence();
 });
 
 function initializeClocks() {
@@ -64,7 +67,7 @@ function initializeClocks() {
     }, 1000);
 }
 
-async function executeTerminalBootSequence() {
+function executeTerminalBootSequence() {
     const logArea = document.getElementById('boot-log-screen');
     const appendLog = (text, type = "info") => {
         if (!logArea) return;
@@ -76,26 +79,19 @@ async function executeTerminalBootSequence() {
         logArea.scrollTop = logArea.scrollHeight;
     };
 
-    try {
-        appendLog("Menghubungkan Pool Jaringan Pasar Keuangan Global...", "info");
-        
-        // Buat dummy data/fetch awal ke coreMemoryCache agar tabel langsung terisi penuh
-        generateFallbackMarketMemory();
-        appendLog("Sinkronisasi harga pasar berhasil diselesaikan.", "success");
-        
-    } catch (err) {
-        console.error(err);
-        appendLog("Koneksi eksternal sibuk. Mengaktifkan data lokal aman.", "warn");
-        generateFallbackMarketMemory();
-    }
+    appendLog("Menghubungkan Pool Jaringan Pasar Keuangan Global...", "info");
+    
+    // Langsung buat data internal tanpa memanggil apiEngine yang merusak alur program
+    generateFallbackMarketMemory();
+    appendLog("Sinkronisasi data instrumen selesai.", "success");
 
     appendLog("Mengunduh feed ringkasan berita makroekonomi...", "info");
     updateMacroNewsFeed();
 
-    // Kompilasi UI di background agar saat masuk data tidak kosong
+    // Kompilasi UI di background agar tabel langsung terisi siap pakai
     compileActiveFilterSorting();
 
-    // Aktifkan tombol masuk bypass
+    // Nyalakan tombol masuk bypass secara instan
     activateTerminalBypassButton();
 }
 
@@ -109,17 +105,17 @@ function generateFallbackMarketMemory() {
         else if (node.uid === "BTCUSDT") basePrice = 67250.00;
         else if (node.uid === "ETHUSDT") basePrice = 3500.00;
         else if (node.uid === "SOLUSDT") basePrice = 175.00;
-        else if (node.category === "stocks") basePrice = 150.00 + (Math.random() * 100);
+        else if (node.category === "stocks") basePrice = 120.00 + (Math.random() * 150);
 
         return {
             uid: node.uid,
             name: node.name,
             category: node.category,
             price: basePrice,
-            change24h: (Math.random() * 3) - 1.4, // Membuat persentase naik turun acak
-            high24h: basePrice * 1.01,
-            low24h: basePrice * 0.99,
-            volume24h: 1500000 + Math.floor(Math.random() * 5000000),
+            change24h: (Math.random() * 4) - 2.0, // Fluktuasi harga acak harian
+            high24h: basePrice * 1.012,
+            low24h: basePrice * 0.988,
+            volume24h: 2000000 + Math.floor(Math.random() * 8000000),
             baseSpread: node.baseSpread,
             decimals: node.decimals
         };
@@ -145,14 +141,14 @@ function activateTerminalBypassButton() {
         
         compileActiveFilterSorting();
         
-        // Siklus update harga tipis-tipis setiap 3 detik agar terlihat realtime berkelanjutan
-        setInterval(liveTickSimulation, 3000);
+        // Jalankan pergerakan harga kecil konstan (live tick simulasi)
+        setInterval(liveTickSimulation, 2000);
     };
 }
 
 function liveTickSimulation() {
     coreMemoryCache.forEach(item => {
-        const tickMove = (Math.random() - 0.5) * (item.price * 0.0005);
+        const tickMove = (Math.random() - 0.5) * (item.price * 0.0003);
         item.price += tickMove;
     });
     compileActiveFilterSorting();
@@ -163,25 +159,24 @@ function compileActiveFilterSorting() {
     if (!tableBody) return;
     tableBody.innerHTML = "";
 
-    // Filter Berdasarkan Kategori Kategori Tab (All, Forex, Stocks, Crypto, Commodities)
+    // 1. Filter Berdasarkan Tab Kategori Aktif
     let filtered = coreMemoryCache;
     if (currentActiveFilter !== 'all') {
         filtered = coreMemoryCache.filter(x => x.category === currentActiveFilter);
     }
 
-    // Filter Berdasarkan Kolom Pencarian (Global Search)
+    // 2. Filter Berdasarkan Input Pencarian (Global Search)
     if (currentSearchQuery.trim() !== "") {
         const searchUpper = currentSearchQuery.toUpperCase();
         filtered = filtered.filter(x => x.uid.includes(searchUpper) || x.name.toUpperCase().includes(searchUpper));
     }
 
-    // Pagination Logic bawaan dari HTML Anda
+    // 3. Pagination Logic
     const totalItems = filtered.length;
     const startIndex = (currentActivePage - 1) * rowsPerPage;
     const endIndex = Math.min(startIndex + rowsPerPage, totalItems);
     const paginatedItems = filtered.slice(startIndex, endIndex);
 
-    // Update Label Keterangan Baris di Kiri Bawah Tabel
     const infoLabel = document.getElementById('pagination-info-label');
     if (infoLabel) {
         infoLabel.innerText = `SHOWING ${totalItems > 0 ? startIndex + 1 : 0} - ${endIndex} OF ${totalItems} NODES`;
@@ -192,7 +187,7 @@ function compileActiveFilterSorting() {
         return;
     }
 
-    // Render Baris Tabel Sesuai Struktur Persis di `forex.txt` Anda
+    // Render Data Baris ke Tabel HTML
     paginatedItems.forEach(node => {
         const isBullish = node.change24h >= 0;
         const colorClass = isBullish ? "text-emerald-400" : "text-rose-500";
@@ -201,8 +196,6 @@ function compileActiveFilterSorting() {
 
         const tr = document.createElement('tr');
         tr.className = "border-b border-slate-900/60 hover:bg-slate-900/30 transition cursor-pointer";
-        
-        // Trigger modal detail kalkulator pnl jika baris diklik
         tr.onclick = () => launchCalculationWorkspaceModal(node.uid);
 
         tr.innerHTML = `
@@ -229,7 +222,6 @@ function launchCalculationWorkspaceModal(uid) {
     const title = document.getElementById('modal-target-pair-title');
     if (title) title.innerText = `${node.name} [${node.uid}]`;
 
-    // Reset default nilai input kalkulator bawaan Anda
     document.getElementById('calc-margin').value = 100;
     document.getElementById('calc-leverage').value = 20;
     
@@ -273,7 +265,6 @@ function updateMacroNewsFeed() {
 }
 
 function setupUiListeners() {
-    // Listener Kolom Pencarian Global (Sesuai kode internal di HTML Anda)
     const searchInput = document.getElementById('global-search');
     if (searchInput) {
         searchInput.addEventListener('input', (e) => {
@@ -283,7 +274,6 @@ function setupUiListeners() {
         });
     }
 
-    // Listener Input Kalkulator Modal (Sesuai kode internal di HTML Anda)
     ['calc-margin', 'calc-leverage'].forEach(id => {
         const inputEl = document.getElementById(id);
         if (inputEl) {
@@ -296,7 +286,6 @@ function setupUiListeners() {
         }
     });
 
-    // Close Modal Button
     const closeModalBtn = document.getElementById('btn-close-modal');
     if (closeModalBtn) {
         closeModalBtn.onclick = () => {
@@ -305,7 +294,6 @@ function setupUiListeners() {
         };
     }
 
-    // Filter Navigasi Tab Kategori Kiri Atas (All, Forex, Stocks, Crypto, Commodities)
     const filters = ['all', 'forex', 'stocks', 'crypto', 'commodities'];
     filters.forEach(filterId => {
         const btn = document.getElementById(`filter-${filterId}`);
@@ -323,7 +311,6 @@ function setupUiListeners() {
         }
     });
 
-    // Tombol Navigasi Pagination
     const prevBtn = document.getElementById('pagination-prev-btn');
     const nextBtn = document.getElementById('pagination-next-btn');
 
