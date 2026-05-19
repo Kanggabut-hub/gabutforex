@@ -1,6 +1,6 @@
 /**
- * Vanguard Quant Terminal - Core Engine Orchestrator (MANDIRI)
- * Bebas dari ketergantungan apiEngine agar tidak crash/stuck
+ * Vanguard Quant Terminal - Core Engine Orchestrator (MANDIRI & ANTI-STUCK)
+ * Berjalan langsung tanpa dependensi luar dan memaksa modal boot tertutup.
  */
 
 let coreMemoryCache = [];
@@ -10,7 +10,7 @@ let currentSearchQuery = '';
 let rowsPerPage = 10;
 let selectedPairUidForModal = 'EURUSD';
 
-// DAFTAR LENGKAP INSTRUMEN (Forex Lengkap, Stock Market, Crypto, Commodities)
+// 1. DAFTAR LENGKAP INSTRUMEN (Forex, Stock Market, Crypto, Commodities)
 const VANGUARD_TICKER_REGISTRY = [
     // FOREIGN CURRENCIES (FOREX LENGKAP)
     { uid: "EURUSD", name: "EUR / USD", category: "forex", baseSpread: 0.00012, decimals: 5 },
@@ -43,14 +43,11 @@ const VANGUARD_TICKER_REGISTRY = [
     { uid: "USOIL", name: "Crude Oil WTI", category: "commodities", baseSpread: 0.03, decimals: 2 }
 ];
 
-document.addEventListener("DOMContentLoaded", () => {
-    initializeClocks();
-    setupUiListeners();
-    
-    // Jalankan sekuens booting awal secara mandiri
-    executeTerminalBootSequence();
-});
+// Langsung jalankan fungsi inisialisasi tanpa menunggu DOMContentLoaded agar tidak kalah cepat dari script HTML
+initializeClocks();
+generateFallbackMarketMemory();
 
+// Fungsi Clock / Jam Berjalan
 function initializeClocks() {
     setInterval(() => {
         const now = new Date();
@@ -67,34 +64,7 @@ function initializeClocks() {
     }, 1000);
 }
 
-function executeTerminalBootSequence() {
-    const logArea = document.getElementById('boot-log-screen');
-    const appendLog = (text, type = "info") => {
-        if (!logArea) return;
-        const p = document.createElement('p');
-        p.innerText = `[${new Date().toLocaleTimeString()}] ${text}`;
-        if (type === "success") p.className = "text-emerald-400";
-        if (type === "warn") p.className = "text-amber-400";
-        logArea.appendChild(p);
-        logArea.scrollTop = logArea.scrollHeight;
-    };
-
-    appendLog("Menghubungkan Pool Jaringan Pasar Keuangan Global...", "info");
-    
-    // Langsung buat data internal tanpa memanggil apiEngine yang merusak alur program
-    generateFallbackMarketMemory();
-    appendLog("Sinkronisasi data instrumen selesai.", "success");
-
-    appendLog("Mengunduh feed ringkasan berita makroekonomi...", "info");
-    updateMacroNewsFeed();
-
-    // Kompilasi UI di background agar tabel langsung terisi siap pakai
-    compileActiveFilterSorting();
-
-    // Nyalakan tombol masuk bypass secara instan
-    activateTerminalBypassButton();
-}
-
+// Generate Data Harga Dummy Mandiri
 function generateFallbackMarketMemory() {
     coreMemoryCache = VANGUARD_TICKER_REGISTRY.map(node => {
         let basePrice = 1.0850;
@@ -112,7 +82,7 @@ function generateFallbackMarketMemory() {
             name: node.name,
             category: node.category,
             price: basePrice,
-            change24h: (Math.random() * 4) - 2.0, // Fluktuasi harga acak harian
+            change24h: (Math.random() * 4) - 2.0,
             high24h: basePrice * 1.012,
             low24h: basePrice * 0.988,
             volume24h: 2000000 + Math.floor(Math.random() * 8000000),
@@ -122,29 +92,52 @@ function generateFallbackMarketMemory() {
     });
 }
 
-function activateTerminalBypassButton() {
-    const bypassBtn = document.getElementById('btn-bypass-boot');
-    if (!bypassBtn) return;
-    
-    bypassBtn.disabled = false;
-    bypassBtn.className = "px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded text-[10px] tracking-wide transition uppercase cursor-pointer";
-    
-    const bootStatus = document.getElementById('boot-status');
-    if (bootStatus) {
-        bootStatus.innerText = "SINKRONISASI SELESAI";
-        bootStatus.className = "text-emerald-400 font-bold";
-    }
-
-    bypassBtn.onclick = () => {
-        const modal = document.getElementById('gateway-modal');
-        if (modal) modal.classList.add('hidden');
-        
-        compileActiveFilterSorting();
-        
-        // Jalankan pergerakan harga kecil konstan (live tick simulasi)
-        setInterval(liveTickSimulation, 2000);
+// Fungsi utama yang dipanggil secara aman dari window onload atau langsung
+window.addEventListener("load", () => {
+    const logArea = document.getElementById('boot-log-screen');
+    const appendLog = (text, type = "info") => {
+        if (!logArea) return;
+        const p = document.createElement('p');
+        p.innerText = `[${new Date().toLocaleTimeString()}] ${text}`;
+        if (type === "success") p.className = "text-emerald-400";
+        if (type === "warn") p.className = "text-amber-400";
+        logArea.appendChild(p);
+        logArea.scrollTop = logArea.scrollHeight;
     };
-}
+
+    appendLog("Menghubungkan Pool Jaringan Pasar Keuangan Global...", "info");
+    appendLog("Sinkronisasi data instrumen selesai.", "success");
+    appendLog("Mengunduh feed ringkasan berita makroekonomi...", "info");
+    
+    updateMacroNewsFeed();
+    setupUiListeners();
+    compileActiveFilterSorting();
+
+    // Aktifkan tombol bypass
+    const bypassBtn = document.getElementById('btn-bypass-boot');
+    if (bypassBtn) {
+        bypassBtn.disabled = false;
+        bypassBtn.className = "px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded text-[10px] tracking-wide transition uppercase cursor-pointer";
+        
+        const bootStatus = document.getElementById('boot-status');
+        if (bootStatus) {
+            bootStatus.innerText = "SINKRONISASI SELESAI";
+            bootStatus.className = "text-emerald-400 font-bold";
+        }
+
+        // PAKSA MODAL HILANG SAAT DIKLIK
+        bypassBtn.onclick = () => {
+            const modal = document.getElementById('gateway-modal');
+            if (modal) {
+                modal.style.display = 'none'; // Cara paling mutlak menghilangkan elemen di CSS
+                modal.classList.add('hidden');
+            }
+            
+            compileActiveFilterSorting();
+            setInterval(liveTickSimulation, 2000); // Simulasi harga berjalan realtime
+        };
+    }
+});
 
 function liveTickSimulation() {
     coreMemoryCache.forEach(item => {
@@ -159,19 +152,16 @@ function compileActiveFilterSorting() {
     if (!tableBody) return;
     tableBody.innerHTML = "";
 
-    // 1. Filter Berdasarkan Tab Kategori Aktif
     let filtered = coreMemoryCache;
     if (currentActiveFilter !== 'all') {
         filtered = coreMemoryCache.filter(x => x.category === currentActiveFilter);
     }
 
-    // 2. Filter Berdasarkan Input Pencarian (Global Search)
     if (currentSearchQuery.trim() !== "") {
         const searchUpper = currentSearchQuery.toUpperCase();
         filtered = filtered.filter(x => x.uid.includes(searchUpper) || x.name.toUpperCase().includes(searchUpper));
     }
 
-    // 3. Pagination Logic
     const totalItems = filtered.length;
     const startIndex = (currentActivePage - 1) * rowsPerPage;
     const endIndex = Math.min(startIndex + rowsPerPage, totalItems);
@@ -187,10 +177,8 @@ function compileActiveFilterSorting() {
         return;
     }
 
-    // Render Data Baris ke Tabel HTML
     paginatedItems.forEach(node => {
         const isBullish = node.change24h >= 0;
-        const colorClass = isBullish ? "text-emerald-400" : "text-rose-500";
         const bgBadge = isBullish ? "bg-emerald-950/30 text-emerald-400 border-emerald-900/50" : "bg-rose-950/30 text-rose-400 border-rose-900/50";
         const sign = isBullish ? "+" : "";
 
@@ -251,7 +239,6 @@ function executeCalculatedRoiPnLFormula(change24h) {
 function updateMacroNewsFeed() {
     const container = document.getElementById('news-feed-container');
     if (!container) return;
-    
     container.innerHTML = `
         <div class="p-2 border border-slate-900 bg-[#04060a] rounded space-y-1">
             <span class="text-[7px] text-slate-500 block font-bold font-mono-tech">FED WATCH • JUST NOW</span>
