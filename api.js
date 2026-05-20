@@ -1,7 +1,7 @@
 /**
  * Vanguard FX API Integration Service Layer
- * Menyediakan Multi-Fallback Engine yang Tangguh:
- * Primary -> Fallback 1 (Binance) -> Fallback 2 (CoinGecko)
+ * Multi-Fallback Engine:
+ * Primary -> Fallback 1 (Binance) -> Fallback 2 (CoinGecko) -> Local Safe Data
  */
 
 const VANGUARD_API_CONFIG = {
@@ -13,7 +13,7 @@ const VANGUARD_API_CONFIG = {
 const VANGUARD_TICKER_REGISTRY = [
     { uid: "EURUSD", name: "EUR / USD", category: "forex", symbolFinnhub: "OANDA:EUR_USD", symbolBinance: "EURUSDT", baseSpread: 0.00012, decimals: 5 },
     { uid: "GBPUSD", name: "GBP / USD", category: "forex", symbolFinnhub: "OANDA:GBP_USD", symbolBinance: "GBPUSDT", baseSpread: 0.00016, decimals: 5 },
-    { uid: "USDJPY", name: "USD / JPY", category: "forex", symbolFinnhub: "OANDA:USD_JPY", symbolBinance: "USDJPY", baseSpread: 0.014, decimals: 3 },
+    { uid: "USDJPY", name: "USD / JPY", category: "forex", symbolFinnhub: "OANDA:USD_JPY", symbolBinance: null, baseSpread: 0.014, decimals: 3 }, // Binance pakai JPYUSDT
     { uid: "AUDUSD", name: "AUD / USD", category: "forex", symbolFinnhub: "OANDA:AUD_USD", symbolBinance: "AUDUSDT", baseSpread: 0.00011, decimals: 5 },
     { uid: "USDCAD", name: "USD / CAD", category: "forex", symbolFinnhub: "OANDA:USD_CAD", symbolBinance: "USDCAD", baseSpread: 0.00015, decimals: 5 },
     { uid: "BTCUSDT", name: "Bitcoin / USDT", category: "crypto", symbolFinnhub: "BINANCE:BTCUSDT", symbolBinance: "BTCUSDT", symbolCoingecko: "bitcoin", baseSpread: 0.5, decimals: 2 },
@@ -28,51 +28,65 @@ class VanguardApiEngine {
 
     // Pipeline Penjamin Ketersediaan Data Pasar
     async fetchMarketPricePool() {
+        // Primary: Finnhub
         if (this.currentProviderIndex === 1) {
             try {
-                return await this.fetchFromPrimaryFinnhub();
+                const data = await this.fetchFromPrimaryFinnhub();
+                return data;
             } catch (err) {
-                console.warn("[API] Primary Finnhub gagal, beralih ke Fallback 1 (Binance)");
+                console.warn("[API] Primary Finnhub gagal, beralih ke Fallback 1 (Binance)", err);
                 this.currentProviderIndex = 2;
                 this.updateUiProviderBadges();
             }
         }
+
+        // Fallback 1: Binance
         if (this.currentProviderIndex === 2) {
             try {
-                return await this.fetchFromFallbackBinance();
+                const data = await this.fetchFromFallbackBinance();
+                return data;
             } catch (err) {
-                console.warn("[API] Fallback 1 Binance gagal, beralih ke Fallback 2 (CoinGecko)");
+                console.warn("[API] Fallback 1 Binance gagal, beralih ke Fallback 2 (CoinGecko)", err);
                 this.currentProviderIndex = 3;
                 this.updateUiProviderBadges();
             }
         }
+
+        // Fallback 2: CoinGecko
         if (this.currentProviderIndex === 3) {
             try {
-                return await this.fetchFromFallbackCoinGecko();
+                const data = await this.fetchFromFallbackCoinGecko();
+                return data;
             } catch (err) {
-                console.warn("[API] Semua jaringan API sibuk/gagal, mengaktifkan Safe Local Data Engine.");
-                this.currentProviderIndex = 1; 
+                console.warn("[API] Semua jaringan API sibuk/gagal, mengaktifkan Safe Local Data Engine.", err);
+                this.currentProviderIndex = 1;
                 this.updateUiProviderBadges();
                 return this.generateAllFallbackData();
             }
         }
+
+        // Safety net kalau semua kondisi di atas tidak terpenuhi
+        return this.generateAllFallbackData();
     }
 
     async fetchFromPrimaryFinnhub() {
         const results = {};
         for (const node of VANGUARD_TICKER_REGISTRY) {
-            const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${node.symbolFinnhub}&token=${VANGUARD_API_CONFIG.FINNHUB_KEY}`);
+            const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(node.symbolFinnhub)}&token=${VANGUARD_API_CONFIG.FINNHUB_KEY}`;
+            const res = await fetch(url);
             if (!res.ok) throw new Error("Finnhub HTTP Invalid");
             const raw = await res.json();
-            
-            if (!raw || raw.c === 0 || !raw.c) {
+
+            // FIX: jangan treat 0 sebagai error, hanya null/undefined
+            if (!raw || raw.c === null || raw.c === undefined) {
                 throw new Error("Finnhub Zero Data Return");
             }
+
             results[node.uid] = {
                 price: parseFloat(raw.c),
-                changePct: parseFloat(raw.dp || 0),
-                high: parseFloat(raw.h || raw.c),
-                low: parseFloat(raw.l || raw.c)
+                changePct: parseFloat(raw.dp ?? 0),
+                high: parseFloat(raw.h ?? raw.c),
+                low: parseFloat(raw.l ?? raw.c)
             };
         }
         return results;
@@ -85,11 +99,39 @@ class VanguardApiEngine {
         const list = await res.json();
 
         for (const node of VANGUARD_TICKER_REGISTRY) {
+            // Khusus USDJPY: Binance pakai JPYUSDT → konversi ke USDJPY
+            if (node.uid === "USDJPY") {
+                const jpy = list.find(x => x.symbol === "JPYUSDT");
+                if (!jpy || parseFloat(jpy.lastPrice) === 0) {
+                    results[node.uid] = this.generateFallbackPlaceholderData(node.uid);
+                    continue;
+                }
+                const jpyUsdt = parseFloat(jpy.lastPrice);
+                const price = 1 / jpyUsdt; // USDJPY = 1 / JPYUSDT
+
+                const highJpyUsdt = parseFloat(jpy.lowPrice); // low JPYUSDT → high USDJPY
+                const lowJpyUsdt = parseFloat(jpy.highPrice); // high JPYUSDT → low USDJPY
+
+                results[node.uid] = {
+                    price,
+                    changePct: parseFloat(jpy.priceChangePercent),
+                    high: 1 / highJpyUsdt,
+                    low: 1 / lowJpyUsdt
+                };
+                continue;
+            }
+
+            if (!node.symbolBinance) {
+                results[node.uid] = this.generateFallbackPlaceholderData(node.uid);
+                continue;
+            }
+
             const item = list.find(x => x.symbol === node.symbolBinance);
             if (!item || parseFloat(item.lastPrice) === 0) {
                 results[node.uid] = this.generateFallbackPlaceholderData(node.uid);
                 continue;
             }
+
             results[node.uid] = {
                 price: parseFloat(item.lastPrice),
                 changePct: parseFloat(item.priceChangePercent),
@@ -104,18 +146,25 @@ class VanguardApiEngine {
         const results = {};
         const cryptoNodes = VANGUARD_TICKER_REGISTRY.filter(x => x.category === "crypto");
         const ids = cryptoNodes.map(x => x.symbolCoingecko).join(",");
-        
-        const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`);
-        const raw = res.ok ? await res.json() : {};
+
+        const res = await fetch(
+            `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(ids)}&vs_currencies=usd&include_24hr_change=true`
+        );
+
+        // FIX: hard fail kalau HTTP tidak OK, biar naik ke fallback lokal
+        if (!res.ok) throw new Error("CoinGecko HTTP Invalid");
+
+        const raw = await res.json();
 
         for (const node of VANGUARD_TICKER_REGISTRY) {
             if (node.category === "crypto" && raw[node.symbolCoingecko]) {
                 const item = raw[node.symbolCoingecko];
+                const price = parseFloat(item.usd);
                 results[node.uid] = {
-                    price: parseFloat(item.usd),
-                    changePct: parseFloat(item.usd_24h_change || 0),
-                    high: parseFloat(item.usd * 1.02),
-                    low: parseFloat(item.usd * 0.98)
+                    price,
+                    changePct: parseFloat(item.usd_24h_change ?? 0),
+                    high: parseFloat(price * 1.02),
+                    low: parseFloat(price * 0.98)
                 };
             } else {
                 results[node.uid] = this.generateFallbackPlaceholderData(node.uid);
@@ -143,23 +192,21 @@ class VanguardApiEngine {
     }
 
     generateFallbackPlaceholderData(uid) {
-        const baselines = { EURUSD: 1.0854, GBPUSD: 1.2642, USDJPY: 155.62, AUDUSD: 0.6621, USDCAD: 1.3645, BTCUSDT: 67250.00, ETHUSDT: 3480.00 };
+        const baselines = {
+            EURUSD: 1.0854,
+            GBPUSD: 1.2642,
+            USDJPY: 155.62,
+            AUDUSD: 0.6621,
+            USDCAD: 1.3645,
+            BTCUSDT: 67250.00,
+            ETHUSDT: 3480.00
+        };
         const val = baselines[uid] || 1.0;
-        return { price: val, changePct: 0.12, high: val * 1.004, low: val * 0.996 };
+        return {
+            price: val,
+            changePct: 0.12,
+            high: val * 1.004,
+            low: val * 0.996
+        };
     }
 
-    updateUiProviderBadges() {
-        const badge = document.getElementById('active-api-badge');
-        const b1 = document.getElementById('status-api1');
-        const b2 = document.getElementById('status-api2');
-        const b3 = document.getElementById('status-api2-coingecko');
-        
-        if (badge) badge.innerText = this.providerNames[this.currentProviderIndex].toUpperCase();
-
-        [b1, b2, b3].forEach(b => { if(b) b.className = "w-1.5 h-1.5 rounded-full bg-slate-600"; });
-        if (this.currentProviderIndex === 1 && b1) b1.className = "w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse";
-        if (this.currentProviderIndex === 2 && b2) b2.className = "w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse";
-        if (this.currentProviderIndex === 3 && b3) b3.className = "w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse";
-    }
-}
-const apiEngine = new VanguardApiEngine();
