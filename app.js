@@ -63,6 +63,77 @@ function initializeClocks() {
         if (clockNyc) clockNyc.innerText = nycTime.toTimeString().split(' ')[0];
     }, 1000);
 }
+// app.js
+// Pastikan apiEngineV5 sudah tersedia dari api.js
+
+// Format helper
+function formatPrice(val, decimals = 4) {
+  if (val === null || val === undefined || Number.isNaN(val)) return "-";
+  return Number(val).toFixed(decimals);
+}
+
+// Render pool ke tabel berdasarkan atribut data-ticker dan data-field
+function renderPoolToTable(pool) {
+  Object.keys(pool).forEach(uid => {
+    const row = document.querySelector(`tr[data-ticker="${uid}"]`);
+    if (!row) return;
+    const priceCell = row.querySelector('[data-field="price"]');
+    const changeCell = row.querySelector('[data-field="change"]');
+    const sourceCell = row.querySelector('[data-field="source"]');
+
+    const data = pool[uid] || {};
+    const decimals = (data.decimals !== undefined) ? data.decimals : 4;
+
+    if (priceCell) priceCell.textContent = formatPrice(data.price, decimals);
+    if (changeCell) changeCell.textContent = (data.changePct !== undefined) ? `${Number(data.changePct).toFixed(2)}%` : "-";
+    if (sourceCell) sourceCell.textContent = data.source || "-";
+  });
+}
+
+// Single snapshot fetch and render
+async function refreshOnce() {
+  try {
+    const pool = await apiEngineV5.fetchMarketPricePool();
+    renderPoolToTable(pool);
+    // broadcast to analysis engine if present
+    if (window.analysisEngine && typeof window.analysisEngine.onPoolUpdate === "function") {
+      window.analysisEngine.onPoolUpdate(pool);
+    }
+  } catch (err) {
+    console.error("refreshOnce error:", err);
+  }
+}
+
+// Start auto-polling and render
+function startAutoUpdate() {
+  // start engine internal timer
+  apiEngineV5.startAutoPool(pool => {
+    renderPoolToTable(pool);
+    if (window.analysisEngine && typeof window.analysisEngine.onPoolUpdate === "function") {
+      window.analysisEngine.onPoolUpdate(pool);
+    }
+  });
+  // optional immediate refresh
+  refreshOnce();
+}
+
+// Stop auto-polling
+function stopAutoUpdate() {
+  apiEngineV5.stopAutoPool();
+}
+
+// Expose controls for console debugging
+window.vanguardUi = {
+  refreshOnce,
+  startAutoUpdate,
+  stopAutoUpdate
+};
+
+// Auto start when DOM ready
+document.addEventListener('DOMContentLoaded', () => {
+  // If you want auto start, uncomment:
+  startAutoUpdate();
+});
 
 // Generate Data Harga Dummy Mandiri
 function generateFallbackMarketMemory() {
