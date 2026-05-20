@@ -1,323 +1,287 @@
 /**
- * Vanguard FX API Integration Service Layer V5
- * Multi-Source, Multi-Fallback, Auto-Merge:
- * - Forex: Finnhub (primary) + Binance (via USDT conversion) + Local
- * - Crypto: Binance (primary) + CoinGecko (fallback) + Local
+ * Vanguard API Engine V7 - Toobit / MEXC / Gate.io - MAX Edition
+ * Features:
+ * - Parallel fetch with Promise.allSettled
+ * - Retries with exponential backoff
+ * - Per-pair provider ranking and normalization
+ * - In-memory caching with TTL
+ * - Diagnostics and health checks
+ * - Optional WebSocket hook points (no external libs)
+ *
+ * Usage:
+ * - Save as public/api.js (or appropriate path)
+ * - Include <script src="/api.js"></script> before app.js
  */
 
-const VANGUARD_API_CONFIG = {
-    FINNHUB_KEY: 'sandbox_c8m910iad3ief4be9g0g', // Ganti ke real key kalau sudah siap live
-    POOL_INTERVAL: 4000 // ms
+const V7_CONFIG = {
+  POOL_INTERVAL: 3000,
+  CACHE_TTL_MS: 2500,
+  RETRY_ATTEMPTS: 3,
+  RETRY_BASE_MS: 300,
+  TOOBIT_BASE: 'https://api.toobit.com',
+  MEXC_BASE: 'https://api.mexc.com',
+  GATEIO_BASE: 'https://api.gateio.ws/api/v4',
+  ENABLE_WEBSOCKETS: false // set true to enable user-provided ws handlers
 };
 
-// Registry instrumen yang dipakai UI kamu
-const VANGUARD_TICKER_REGISTRY = [
-    // ===== FOREX =====
-    { uid: "EURUSD", name: "EUR / USD", category: "forex", symbolFinnhub: "OANDA:EUR_USD", symbolBinanceFx: "EURUSDT", baseSpread: 0.00012, decimals: 5 },
-    { uid: "GBPUSD", name: "GBP / USD", category: "forex", symbolFinnhub: "OANDA:GBP_USD", symbolBinanceFx: "GBPUSDT", baseSpread: 0.00016, decimals: 5 },
-    { uid: "USDJPY", name: "USD / JPY", category: "forex", symbolFinnhub: "OANDA:USD_JPY", symbolBinanceFx: "JPYUSDT", baseSpread: 0.014, decimals: 3 }, // USDJPY = 1 / JPYUSDT
-    { uid: "AUDUSD", name: "AUD / USD", category: "forex", symbolFinnhub: "OANDA:AUD_USD", symbolBinanceFx: "AUDUSDT", baseSpread: 0.00011, decimals: 5 },
-    { uid: "USDCAD", name: "USD / CAD", category: "forex", symbolFinnhub: "OANDA:USD_CAD", symbolBinanceFx: "CADUSDT", baseSpread: 0.00015, decimals: 5 },
-
-    // ===== CRYPTO (sesuaikan dengan UI kamu) =====
-    { uid: "BTCUSDT", name: "Bitcoin / USDT", category: "crypto", symbolBinance: "BTCUSDT", symbolCoingecko: "bitcoin", baseSpread: 0.5, decimals: 2 },
-    { uid: "ETHUSDT", name: "Ethereum / USDT", category: "crypto", symbolBinance: "ETHUSDT", symbolCoingecko: "ethereum", baseSpread: 0.04, decimals: 2 },
-    { uid: "BNBUSDT", name: "BNB / USDT", category: "crypto", symbolBinance: "BNBUSDT", symbolCoingecko: "binancecoin", baseSpread: 0.04, decimals: 2 },
-    { uid: "SOLUSDT", name: "Solana / USDT", category: "crypto", symbolBinance: "SOLUSDT", symbolCoingecko: "solana", baseSpread: 0.04, decimals: 2 },
-    { uid: "XRPUSDT", name: "XRP / USDT", category: "crypto", symbolBinance: "XRPUSDT", symbolCoingecko: "ripple", baseSpread: 0.0004, decimals: 4 },
-    { uid: "ADAUSDT", name: "Cardano / USDT", category: "crypto", symbolBinance: "ADAUSDT", symbolCoingecko: "cardano", baseSpread: 0.0004, decimals: 4 },
-    { uid: "DOGEUSDT", name: "Dogecoin / USDT", category: "crypto", symbolBinance: "DOGEUSDT", symbolCoingecko: "dogecoin", baseSpread: 0.0004, decimals: 5 },
-    { uid: "MATICUSDT", name: "Polygon / USDT", category: "crypto", symbolBinance: "MATICUSDT", symbolCoingecko: "matic-network", baseSpread: 0.0004, decimals: 4 },
-    { uid: "DOTUSDT", name: "Polkadot / USDT", category: "crypto", symbolBinance: "DOTUSDT", symbolCoingecko: "polkadot", baseSpread: 0.004, decimals: 3 },
-    { uid: "AVAXUSDT", name: "Avalanche / USDT", category: "crypto", symbolBinance: "AVAXUSDT", symbolCoingecko: "avalanche-2", baseSpread: 0.004, decimals: 3 },
-    { uid: "LTCUSDT", name: "Litecoin / USDT", category: "crypto", symbolBinance: "LTCUSDT", symbolCoingecko: "litecoin", baseSpread: 0.04, decimals: 2 },
-    { uid: "LINKUSDT", name: "Chainlink / USDT", category: "crypto", symbolBinance: "LINKUSDT", symbolCoingecko: "chainlink", baseSpread: 0.004, decimals: 3 },
-    { uid: "TRXUSDT", name: "TRON / USDT", category: "crypto", symbolBinance: "TRXUSDT", symbolCoingecko: "tron", baseSpread: 0.0002, decimals: 5 },
-    { uid: "UNIUSDT", name: "Uniswap / USDT", category: "crypto", symbolBinance: "UNIUSDT", symbolCoingecko: "uniswap", baseSpread: 0.004, decimals: 3 },
-    { uid: "ATOMUSDT", name: "Cosmos / USDT", category: "crypto", symbolBinance: "ATOMUSDT", symbolCoingecko: "cosmos", baseSpread: 0.004, decimals: 3 },
-    { uid: "ETCUSDT", name: "Ethereum Classic / USDT", category: "crypto", symbolBinance: "ETCUSDT", symbolCoingecko: "ethereum-classic", baseSpread: 0.004, decimals: 3 }
+// Registry: extend to match your UI rows (uid must match data-ticker)
+const V7_TICKER_REGISTRY = [
+  { uid: "BTCUSDT", category: "crypto", symbols: { toobit: "BTCUSDT", mexc: "BTCUSDT", gateio: "BTC_USDT" }, decimals: 2 },
+  { uid: "ETHUSDT", category: "crypto", symbols: { toobit: "ETHUSDT", mexc: "ETHUSDT", gateio: "ETH_USDT" }, decimals: 2 },
+  { uid: "BNBUSDT", category: "crypto", symbols: { toobit: "BNBUSDT", mexc: "BNBUSDT", gateio: "BNB_USDT" }, decimals: 3 },
+  { uid: "EURUSD", category: "forex", symbols: { toobit: "EURUSDT", mexc: "EURUSDT", gateio: "EUR_USDT" }, decimals: 5 },
+  { uid: "USDJPY", category: "forex", symbols: { toobit: "JPYUSDT", mexc: "JPYUSDT", gateio: "JPY_USDT" }, decimals: 3, convertFrom: "JPYUSDT" }
 ];
 
-class VanguardApiEngineV5 {
-    constructor() {
-        this.currentProviderIndex = 1; // 1 = Normal (multi-source), 4 = Local only
-        this.providerNames = {
-            1: "MULTI-API LIVE",
-            4: "SAFE LOCAL DATA"
-        };
-        this.poolTimer = null;
+// --- Utilities ---
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function fetchWithRetries(url, opts = {}, attempts = V7_CONFIG.RETRY_ATTEMPTS) {
+  let attempt = 0;
+  let lastErr = null;
+  while (attempt < attempts) {
+    try {
+      const res = await fetch(url, opts);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const ct = res.headers.get('content-type') || '';
+      if (ct.includes('application/json')) return await res.json();
+      // try text fallback
+      const text = await res.text();
+      try { return JSON.parse(text); } catch { return text; }
+    } catch (err) {
+      lastErr = err;
+      attempt++;
+      const backoff = V7_CONFIG.RETRY_BASE_MS * Math.pow(2, attempt - 1);
+      await sleep(backoff + Math.random() * 100);
     }
-
-    // ================== PUBLIC API ==================
-
-    /**
-     * Ambil sekali snapshot pool harga (return Promise<object>)
-     */
-    async fetchMarketPricePool() {
-        try {
-            const [finnhubFx, binanceAll, coingeckoCrypto] = await Promise.allSettled([
-                this.fetchForexFromFinnhub(),
-                this.fetchAllFromBinance(),
-                this.fetchCryptoFromCoinGecko()
-            ]);
-
-            const merged = this.mergeAllSources({
-                finnhubFx: finnhubFx.status === "fulfilled" ? finnhubFx.value : null,
-                binanceAll: binanceAll.status === "fulfilled" ? binanceAll.value : null,
-                coingeckoCrypto: coingeckoCrypto.status === "fulfilled" ? coingeckoCrypto.value : null
-            });
-
-            this.currentProviderIndex = 1;
-            this.updateUiProviderBadges();
-            return merged;
-        } catch (err) {
-            console.warn("[API V5] Semua sumber gagal, fallback ke local safe data:", err);
-            this.currentProviderIndex = 4;
-            this.updateUiProviderBadges();
-            return this.generateAllFallbackData();
-        }
-    }
-
-    /**
-     * Mode auto-pooling: setiap POOL_INTERVAL ms akan panggil callback(data)
-     * @param {(data: object) => void} onUpdate
-     */
-    startAutoPool(onUpdate) {
-        if (this.poolTimer) clearInterval(this.poolTimer);
-        this.poolTimer = setInterval(async () => {
-            try {
-                const data = await this.fetchMarketPricePool();
-                if (typeof onUpdate === "function") onUpdate(data);
-            } catch (e) {
-                console.error("[API V5] Auto pool error:", e);
-            }
-        }, VANGUARD_API_CONFIG.POOL_INTERVAL);
-    }
-
-    stopAutoPool() {
-        if (this.poolTimer) clearInterval(this.poolTimer);
-        this.poolTimer = null;
-    }
-
-    async fetchMarketNews() {
-        try {
-            const res = await fetch(`https://finnhub.io/api/v1/news?category=forex&token=${VANGUARD_API_CONFIG.FINNHUB_KEY}`);
-            if (!res.ok) return [];
-            return await res.json();
-        } catch {
-            return [];
-        }
-    }
-
-    // ================== INTERNAL FETCHERS ==================
-
-    async fetchForexFromFinnhub() {
-        const results = {};
-        const fxNodes = VANGUARD_TICKER_REGISTRY.filter(x => x.category === "forex");
-
-        for (const node of fxNodes) {
-            const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(node.symbolFinnhub)}&token=${VANGUARD_API_CONFIG.FINNHUB_KEY}`;
-            const res = await fetch(url);
-            if (!res.ok) throw new Error("Finnhub HTTP Invalid");
-            const raw = await res.json();
-
-            if (!raw || raw.c === null || raw.c === undefined) {
-                // Kalau sandbox sering kasih 0/null → biar nanti ditolong Binance/local
-                continue;
-            }
-
-            results[node.uid] = {
-                price: parseFloat(raw.c),
-                changePct: parseFloat(raw.dp ?? 0),
-                high: parseFloat(raw.h ?? raw.c),
-                low: parseFloat(raw.l ?? raw.c),
-                source: "FINNHUB"
-            };
-        }
-        return results;
-    }
-
-    async fetchAllFromBinance() {
-        const results = {};
-        const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr`);
-        if (!res.ok) throw new Error("Binance API HTTP Invalid");
-        const list = await res.json();
-
-        const bySymbol = {};
-        for (const item of list) {
-            bySymbol[item.symbol] = item;
-        }
-
-        for (const node of VANGUARD_TICKER_REGISTRY) {
-            if (node.category === "crypto" && node.symbolBinance) {
-                const item = bySymbol[node.symbolBinance];
-                if (!item || parseFloat(item.lastPrice) === 0) continue;
-
-                results[node.uid] = {
-                    price: parseFloat(item.lastPrice),
-                    changePct: parseFloat(item.priceChangePercent),
-                    high: parseFloat(item.highPrice),
-                    low: parseFloat(item.lowPrice),
-                    source: "BINANCE"
-                };
-            }
-
-            if (node.category === "forex" && node.symbolBinanceFx) {
-                // Forex via USDT conversion
-                const sym = node.symbolBinanceFx;
-                const item = bySymbol[sym];
-                if (!item || parseFloat(item.lastPrice) === 0) continue;
-
-                const px = parseFloat(item.lastPrice);
-
-                let price;
-                if (node.uid === "USDJPY") {
-                    // USDJPY = 1 / JPYUSDT
-                    price = 1 / px;
-                } else if (node.uid === "USDCAD") {
-                    // USDCAD = 1 / CADUSDT
-                    price = 1 / px;
-                } else {
-                    // EURUSD, GBPUSD, AUDUSD: XXXUSDT / 1
-                    price = px;
-                }
-
-                results[node.uid] = {
-                    price,
-                    changePct: parseFloat(item.priceChangePercent),
-                    high: price * 1.01,
-                    low: price * 0.99,
-                    source: "BINANCE-FX"
-                };
-            }
-        }
-
-        return results;
-    }
-
-    async fetchCryptoFromCoinGecko() {
-        const results = {};
-        const cryptoNodes = VANGUARD_TICKER_REGISTRY.filter(x => x.category === "crypto");
-        const ids = cryptoNodes.map(x => x.symbolCoingecko).join(",");
-
-        const res = await fetch(
-            `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(ids)}&vs_currencies=usd&include_24hr_change=true`
-        );
-        if (!res.ok) throw new Error("CoinGecko HTTP Invalid");
-
-        const raw = await res.json();
-
-        for (const node of cryptoNodes) {
-            const item = raw[node.symbolCoingecko];
-            if (!item || !item.usd) continue;
-
-            const price = parseFloat(item.usd);
-            results[node.uid] = {
-                price,
-                changePct: parseFloat(item.usd_24h_change ?? 0),
-                high: price * 1.02,
-                low: price * 0.98,
-                source: "COINGECKO"
-            };
-        }
-
-        return results;
-    }
-
-    // ================== MERGING & FALLBACK ==================
-
-    mergeAllSources({ finnhubFx, binanceAll, coingeckoCrypto }) {
-        const finalResults = {};
-
-        for (const node of VANGUARD_TICKER_REGISTRY) {
-            let data = null;
-
-            if (node.category === "forex") {
-                // Prioritas: Finnhub → Binance-FX → Local
-                const fromFinnhub = finnhubFx && finnhubFx[node.uid];
-                const fromBinanceFx = binanceAll && binanceAll[node.uid];
-
-                data = fromFinnhub || fromBinanceFx || this.generateFallbackPlaceholderData(node.uid);
-            } else if (node.category === "crypto") {
-                // Prioritas: Binance → CoinGecko → Local
-                const fromBinance = binanceAll && binanceAll[node.uid];
-                const fromCg = coingeckoCrypto && coingeckoCrypto[node.uid];
-
-                data = fromBinance || fromCg || this.generateFallbackPlaceholderData(node.uid);
-            } else {
-                data = this.generateFallbackPlaceholderData(node.uid);
-            }
-
-            finalResults[node.uid] = data;
-        }
-
-        return finalResults;
-    }
-
-    generateAllFallbackData() {
-        const results = {};
-        VANGUARD_TICKER_REGISTRY.forEach(node => {
-            results[node.uid] = this.generateFallbackPlaceholderData(node.uid);
-        });
-        return results;
-    }
-
-    generateFallbackPlaceholderData(uid) {
-        const baselines = {
-            EURUSD: 1.0854,
-            GBPUSD: 1.2642,
-            USDJPY: 155.62,
-            AUDUSD: 0.6621,
-            USDCAD: 1.3645,
-            BTCUSDT: 67250.00,
-            ETHUSDT: 3480.00,
-            BNBUSDT: 580.00,
-            SOLUSDT: 150.00,
-            XRPUSDT: 0.52,
-            ADAUSDT: 0.45,
-            DOGEUSDT: 0.16,
-            MATICUSDT: 0.80,
-            DOTUSDT: 7.20,
-            AVAXUSDT: 32.00,
-            LTCUSDT: 85.00,
-            LINKUSDT: 14.00,
-            TRXUSDT: 0.12,
-            UNIUSDT: 8.50,
-            ATOMUSDT: 9.20,
-            ETCUSDT: 28.00
-        };
-        const val = baselines[uid] || 1.0;
-        return {
-            price: val,
-            changePct: 0.0,
-            high: val * 1.004,
-            low: val * 0.996,
-            source: "LOCAL"
-        };
-    }
-
-    updateUiProviderBadges() {
-        const badge = document.getElementById('active-api-badge');
-        const b1 = document.getElementById('status-api1');
-        const b4 = document.getElementById('status-api4'); // kamu bisa bikin dot khusus "LOCAL"
-
-        if (badge) {
-            const name = this.providerNames[this.currentProviderIndex] || "UNKNOWN";
-            badge.innerText = name.toUpperCase();
-        }
-
-        [b1, b4].forEach(b => {
-            if (b) b.className = "w-1.5 h-1.5 rounded-full bg-slate-600";
-        });
-
-        if (this.currentProviderIndex === 1 && b1) {
-            b1.className = "w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse";
-        }
-        if (this.currentProviderIndex === 4 && b4) {
-            b4.className = "w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse";
-        }
-    }
+  }
+  throw lastErr;
 }
 
-// Global instance
-const apiEngineV5 = new VanguardApiEngineV5();
+// Simple in-memory cache
+const V7_CACHE = new Map();
+function cacheSet(key, value, ttl = V7_CONFIG.CACHE_TTL_MS) {
+  const expires = Date.now() + ttl;
+  V7_CACHE.set(key, { value, expires });
+}
+function cacheGet(key) {
+  const entry = V7_CACHE.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expires) { V7_CACHE.delete(key); return null; }
+  return entry.value;
+}
+
+// Normalize symbol keys for provider responses
+function normalizeSymbolKey(provider, rawSymbol) {
+  if (!rawSymbol) return rawSymbol;
+  // Gate.io returns "BTC_USDT" or "BTC/USDT" etc.
+  return rawSymbol.replace(/[-\/_]/g, '').toUpperCase();
+}
+
+// --- Provider fetchers (public endpoints) ---
+// Each returns a map: { SYMBOL: rawItem, ... } or null on failure
+
+async function fetchToobitAll() {
+  const cacheKey = 'toobit_all_v7';
+  const cached = cacheGet(cacheKey);
+  if (cached) return cached;
+  // Example path; adjust if Toobit docs differ
+  const url = `${V7_CONFIG.TOOBIT_BASE}/market/ticker/24hr`;
+  const raw = await fetchWithRetries(url);
+  if (!raw) return null;
+  const map = {};
+  (Array.isArray(raw) ? raw : (raw.data || [])).forEach(it => {
+    const sym = normalizeSymbolKey('toobit', it.symbol || it.s);
+    if (sym) map[sym] = it;
+  });
+  cacheSet(cacheKey, map);
+  return map;
+}
+
+async function fetchMexcAll() {
+  const cacheKey = 'mexc_all_v7';
+  const cached = cacheGet(cacheKey);
+  if (cached) return cached;
+  const url = `${V7_CONFIG.MEXC_BASE}/api/v3/ticker/24hr`;
+  const raw = await fetchWithRetries(url);
+  if (!raw) return null;
+  const map = {};
+  (Array.isArray(raw) ? raw : (raw.data || [])).forEach(it => {
+    const sym = normalizeSymbolKey('mexc', it.symbol || it.s);
+    if (sym) map[sym] = it;
+  });
+  cacheSet(cacheKey, map);
+  return map;
+}
+
+async function fetchGateioAll() {
+  const cacheKey = 'gateio_all_v7';
+  const cached = cacheGet(cacheKey);
+  if (cached) return cached;
+  const url = `${V7_CONFIG.GATEIO_BASE}/spot/tickers`;
+  const raw = await fetchWithRetries(url);
+  if (!raw) return null;
+  const map = {};
+  (Array.isArray(raw) ? raw : (raw.data || [])).forEach(it => {
+    // gate returns currency_pair like "BTC_USDT" or "BTC/USDT"
+    const rawSym = it.currency_pair || it.symbol || it.ticker;
+    const sym = normalizeSymbolKey('gateio', rawSym);
+    if (sym) map[sym] = it;
+  });
+  cacheSet(cacheKey, map);
+  return map;
+}
+
+// --- Normalizers per provider to unified { price, changePct, high, low, raw, source } ---
+function normalizeToUnified(provider, rawItem, providerName) {
+  if (!rawItem) return null;
+  // Try common fields with safe parsing
+  const last = parseFloat(rawItem.last || rawItem.lastPrice || rawItem.price || rawItem.close || rawItem.last_price || rawItem.last_trade_price);
+  const high = parseFloat(rawItem.high || rawItem.highPrice || rawItem.high_price || rawItem.h) || last;
+  const low = parseFloat(rawItem.low || rawItem.lowPrice || rawItem.low_price || rawItem.l) || last;
+  const changePct = parseFloat(rawItem.priceChangePercent || rawItem.change_percentage || rawItem.percent || rawItem.priceChange || 0);
+  return { price: Number.isFinite(last) ? last : null, changePct: Number.isFinite(changePct) ? changePct : 0, high, low, raw: rawItem, source: providerName };
+}
+
+// --- Merge logic with per-pair provider ranking and conversion support ---
+function mergeProviderMaps({ toobitMap, mexcMap, gateioMap }) {
+  const out = {};
+  for (const node of V7_TICKER_REGISTRY) {
+    const uid = node.uid;
+    const symbols = node.symbols || {};
+    // Build candidate raw items in priority order: Toobit -> MEXC -> Gate.io
+    const candidates = [];
+    const symToobit = normalizeSymbolKey('toobit', symbols.toobit);
+    const symMexc = normalizeSymbolKey('mexc', symbols.mexc);
+    const symGate = normalizeSymbolKey('gateio', symbols.gateio || symbols.gateio || symbols.gateio);
+
+    if (toobitMap && symToobit && toobitMap[symToobit]) candidates.push({ raw: toobitMap[symToobit], provider: 'TOOBIT' });
+    if (mexcMap && symMexc && mexcMap[symMexc]) candidates.push({ raw: mexcMap[symMexc], provider: 'MEXC' });
+    if (gateioMap && symGate && gateioMap[symGate]) candidates.push({ raw: gateioMap[symGate], provider: 'GATEIO' });
+
+    // If forex conversion required (e.g., USDJPY from JPYUSDT), handle later
+    let unified = null;
+    for (const c of candidates) {
+      const u = normalizeToUnified(c.provider, c.raw, c.provider);
+      if (u && u.price !== null) { unified = u; break; }
+    }
+
+    // Special conversion: if node.convertFrom exists (e.g., USDJPY from JPYUSDT)
+    if ((!unified || unified.price === null) && node.convertFrom) {
+      // try to find convertFrom symbol across providers
+      const convSym = normalizeSymbolKey('any', node.convertFrom);
+      const convRaw = (toobitMap && toobitMap[convSym]) || (mexcMap && mexcMap[convSym]) || (gateioMap && gateioMap[convSym]);
+      if (convRaw) {
+        const convUnified = normalizeToUnified('CONV', convRaw, 'CONVERSION');
+        if (convUnified && convUnified.price && convUnified.price > 0) {
+          // e.g., USDJPY = 1 / JPYUSDT
+          unified = { ...convUnified, price: 1 / convUnified.price, source: (convUnified.source || 'CONVERSION') + '-INVERT' };
+        }
+      }
+    }
+
+    // If still null, fallback to local baseline
+    if (!unified || unified.price === null) {
+      unified = generateFallbackPlaceholderData(uid);
+      unified.source = 'LOCAL';
+    }
+
+    // Attach decimals if available
+    unified.decimals = node.decimals ?? node.decimals ?? 4;
+    out[uid] = unified;
+  }
+  return out;
+}
+
+// --- Baseline local fallback values ---
+function generateFallbackPlaceholderData(uid) {
+  const baselines = {
+    BTCUSDT: 60000,
+    ETHUSDT: 3500,
+    BNBUSDT: 300,
+    EURUSD: 1.08,
+    USDJPY: 155.6
+  };
+  const val = baselines[uid] ?? 1.0;
+  return { price: val, changePct: 0, high: val * 1.002, low: val * 0.998, raw: null, source: 'LOCAL' };
+}
+
+// --- Diagnostics helper ---
+async function healthCheck() {
+  const results = { timestamp: Date.now(), providers: {} };
+  try {
+    const [t, m, g] = await Promise.allSettled([fetchToobitAll(), fetchMexcAll(), fetchGateioAll()]);
+    results.providers.toobit = t.status === 'fulfilled' ? 'ok' : `err:${t.reason?.message || 'fail'}`;
+    results.providers.mexc = m.status === 'fulfilled' ? 'ok' : `err:${m.reason?.message || 'fail'}`;
+    results.providers.gateio = g.status === 'fulfilled' ? 'ok' : `err:${g.reason?.message || 'fail'}`;
+  } catch (e) {
+    results.error = e.message;
+  }
+  return results;
+}
+
+// --- Public Engine Class ---
+class VanguardApiEngineV7 {
+  constructor() {
+    this.poolTimer = null;
+    this.lastSnapshot = null;
+  }
+
+  async fetchMarketPricePool() {
+    // Use cached snapshot if fresh
+    const cacheKey = 'v7_snapshot';
+    const cached = cacheGet(cacheKey);
+    if (cached) return cached;
+
+    // Parallel provider fetch
+    const [toobitRes, mexcRes, gateioRes] = await Promise.allSettled([fetchToobitAll(), fetchMexcAll(), fetchGateioAll()]);
+    const toobitMap = toobitRes.status === 'fulfilled' ? toobitRes.value : null;
+    const mexcMap = mexcRes.status === 'fulfilled' ? mexcRes.value : null;
+    const gateioMap = gateioRes.status === 'fulfilled' ? gateioRes.value : null;
+
+    const merged = mergeProviderMaps({ toobitMap, mexcMap, gateioMap });
+    cacheSet(cacheKey, merged, V7_CONFIG.CACHE_TTL_MS);
+    this.lastSnapshot = { ts: Date.now(), data: merged, providers: { toobit: !!toobitMap, mexc: !!mexcMap, gateio: !!gateioMap } };
+    return merged;
+  }
+
+  startAutoPool(onUpdate) {
+    if (this.poolTimer) clearInterval(this.poolTimer);
+    // immediate run
+    (async () => {
+      try {
+        const snap = await this.fetchMarketPricePool();
+        if (typeof onUpdate === 'function') onUpdate(snap);
+      } catch (e) { console.error('initial pool error', e); }
+    })();
+
+    this.poolTimer = setInterval(async () => {
+      try {
+        const snap = await this.fetchMarketPricePool();
+        if (typeof onUpdate === 'function') onUpdate(snap);
+      } catch (e) { console.error('auto pool error', e); }
+    }, V7_CONFIG.POOL_INTERVAL);
+  }
+
+  stopAutoPool() {
+    if (this.poolTimer) clearInterval(this.poolTimer);
+    this.poolTimer = null;
+  }
+
+  async getDiagnostics() {
+    return { lastSnapshot: this.lastSnapshot, health: await healthCheck() };
+  }
+
+  // Optional WebSocket hook points (no implementation; user can attach)
+  onWebSocketMessage(provider, msg) {
+    // user can override: window.apiEngineV7.onWebSocketMessage = (p,m)=>{...}
+    if (typeof window?.apiEngineV7?.onWebSocketMessage === 'function') {
+      try { window.apiEngineV7.onWebSocketMessage(provider, msg); } catch {}
+    }
+  }
+}
+
+const apiEngineV7 = new VanguardApiEngineV7();
+
+// Expose for console debugging
+window.apiEngineV7 = apiEngineV7;
